@@ -3,11 +3,9 @@ import { SPATIAL } from '../config';
 import { generateSelector, scoreElement } from '../utils/spatial';
 import type { SpatialElement, SpatialEvent, DragSpatialFeedback, ElementContact, ElementProximity } from '../types/spatial';
 import type { UseDOMSpatialIndexReturn } from './useDOMSpatialIndex';
-import type { UseHandOverDOMReturn } from './useHandOverDOM';
 
 export interface UseSpatialFeedbackOptions {
   spatialIndex: UseDOMSpatialIndexReturn;
-  handOverDOM: UseHandOverDOMReturn;
   snapThreshold?: number;
   proximityThreshold?: number;
 }
@@ -51,8 +49,12 @@ export function useSpatialFeedback(options: UseSpatialFeedbackOptions): UseSpati
   }, []);
 
   const makeSpatialElement = useCallback((el: Element): SpatialElement => {
+    // Try cached version from spatial index first
+    const cached = spatialIndex.indexRef.current.registry.get(el);
+    if (cached) return cached;
+    // Fallback for elements not in the index
     const rect = el.getBoundingClientRect();
-    const score = scoreElement(el);
+    const score = scoreElement(el, rect);
     return {
       element: el,
       tagName: el.tagName,
@@ -62,7 +64,7 @@ export function useSpatialFeedback(options: UseSpatialFeedbackOptions): UseSpati
       relevanceScore: score,
       isInteractive: score >= SPATIAL.INTERACTIVE_SCORE_THRESHOLD,
     };
-  }, []);
+  }, [spatialIndex]);
 
   const updateDragFeedback = useCallback((
     handedness: 'Left' | 'Right',
@@ -180,9 +182,22 @@ export function useSpatialFeedback(options: UseSpatialFeedbackOptions): UseSpati
 
   const clearDrag = useCallback((handedness: 'Left' | 'Right') => {
     const key = handedness === 'Left' ? 'left' : 'right';
+    const prevNearby = prevNearbyRef.current[key];
+    if (prevNearby.size > 0) {
+      const now = performance.now();
+      for (const el of prevNearby) {
+        emit({
+          type: 'element-separate',
+          handedness,
+          target: generateSelector(el),
+          detail: { reason: 'drag-end' },
+          timestamp: now,
+        });
+      }
+    }
     feedbackRef.current[key] = null;
     prevNearbyRef.current[key] = new Set();
-  }, []);
+  }, [emit]);
 
   return { feedbackRef, updateDragFeedback, onFeedbackEvent, clearDrag };
 }

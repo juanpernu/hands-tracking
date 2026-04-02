@@ -98,12 +98,13 @@ function HandSection({
 function EventFeed({ events }: { events: SpatialEvent[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const visible = events.slice(-20);
+  const lastTimestamp = events.length > 0 ? events[events.length - 1].timestamp : 0;
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [events.length]);
+  }, [lastTimestamp]);
 
   return (
     <div ref={scrollRef} style={feedScrollStyle}>
@@ -113,7 +114,7 @@ function EventFeed({ events }: { events: SpatialEvent[] }) {
         visible.map((ev, i) => {
           const dotColor = EVENT_DOT_COLORS[ev.type] ?? '#888';
           return (
-            <div key={`${ev.timestamp}-${i}`} style={feedEntryStyle}>
+            <div key={`${ev.timestamp}-${ev.type}-${i}`} style={feedEntryStyle}>
               <span style={{ ...dotStyle, backgroundColor: dotColor }} />
               <span style={{ color: dotColor }}>
                 {formatEventDetail(ev)}
@@ -132,7 +133,10 @@ export const SpatialHUD = memo(function SpatialHUD({ handSpatialRef, spatialEven
   useEffect(() => {
     const id = setInterval(() => {
       const { left, right } = handSpatialRef.current;
-      setSnapshot({ left, right });
+      setSnapshot({
+        left: left ? { ...left } : null,
+        right: right ? { ...right } : null,
+      });
     }, 100);
     return () => clearInterval(id);
   }, [handSpatialRef]);
@@ -151,7 +155,7 @@ export const SpatialHUD = memo(function SpatialHUD({ handSpatialRef, spatialEven
 
       {/* Event feed */}
       <div style={feedHeaderStyle}>
-        <span style={feedLabelStyle}>EVENTS ({spatialEvents.slice(-20).length})</span>
+        <span style={feedLabelStyle}>EVENTS ({spatialEvents.length})</span>
       </div>
       <EventFeed events={spatialEvents} />
     </div>

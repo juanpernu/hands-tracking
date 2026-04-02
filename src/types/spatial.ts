@@ -41,6 +41,7 @@ export interface HandSpatialState {
   hoverDurationMs: number;
   isOverInteractive: boolean;
   previousTarget: SpatialElement | null;
+  lastUpdateTimestamp?: number;
 }
 
 export interface DragSpatialFeedback {

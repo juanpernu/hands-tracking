@@ -49,11 +49,13 @@ export function useDOMSpatialIndex(): UseDOMSpatialIndexReturn {
     // LRU eviction: remove elements not seen for EVICTION_FRAMES
     if (state.frameCount % SPATIAL.EVICTION_FRAMES === 0) {
       const cutoff = state.frameCount - SPATIAL.EVICTION_FRAMES;
+      const toEvict: Element[] = [];
       for (const [el, frame] of state.lastSeen) {
-        if (frame < cutoff) {
-          state.registry.delete(el);
-          state.lastSeen.delete(el);
-        }
+        if (frame < cutoff) toEvict.push(el);
+      }
+      for (const el of toEvict) {
+        state.registry.delete(el);
+        state.lastSeen.delete(el);
       }
     }
 
@@ -85,7 +87,7 @@ export function useDOMSpatialIndex(): UseDOMSpatialIndexReturn {
           element: el,
           tagName: el.tagName,
           selector: el.getAttribute('data-object-id')
-            ? `[data-object-id="${el.getAttribute('data-object-id')}"]`
+            ? `[data-object-id="${CSS.escape(el.getAttribute('data-object-id')!)}"]`
             : el.tagName.toLowerCase(),
           rect,
           area: rect.width * rect.height,
@@ -97,21 +99,32 @@ export function useDOMSpatialIndex(): UseDOMSpatialIndexReturn {
     }
 
     // Batch update rects for all tracked elements
+    const disconnected: Element[] = [];
     for (const [el, spatial] of state.registry) {
+      if (!el.isConnected) {
+        disconnected.push(el);
+        continue;
+      }
       const rect = el.getBoundingClientRect();
       spatial.rect = rect;
       spatial.area = rect.width * rect.height;
     }
+    for (const el of disconnected) {
+      state.registry.delete(el);
+      state.lastSeen.delete(el);
+    }
 
-    // Compute contacts and proximities between all pairs
-    const elements = Array.from(state.registry.values());
+    // Compute contacts and proximities only between trackable elements
+    const trackable = Array.from(state.registry.values()).filter((el) =>
+      el.element.hasAttribute('data-object-id') || el.element.hasAttribute('data-trackable')
+    );
     const contacts: ElementContact[] = [];
     const proximities: ElementProximity[] = [];
 
-    for (let i = 0; i < elements.length; i++) {
-      for (let j = i + 1; j < elements.length; j++) {
-        const a = elements[i];
-        const b = elements[j];
+    for (let i = 0; i < trackable.length; i++) {
+      for (let j = i + 1; j < trackable.length; j++) {
+        const a = trackable[i];
+        const b = trackable[j];
 
         const contact = computeContact(a.rect, a.area, b.rect, b.area);
         if (contact) {

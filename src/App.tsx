@@ -99,7 +99,7 @@ export default function App() {
   // --- Spatial tracking hooks ---
   const spatialIndex = useDOMSpatialIndex();
   const handOverDOM = useHandOverDOM({ spatialIndex });
-  const spatialFeedback = useSpatialFeedback({ spatialIndex, handOverDOM });
+  const spatialFeedback = useSpatialFeedback({ spatialIndex });
 
   // Wire spatial events into telemetry log
   const addSpatialLogEntry = useCallback((event: SpatialEvent) => {
@@ -117,8 +117,10 @@ export default function App() {
     });
   }, [addEntry]);
 
-  handOverDOM.onSpatialEvent.current = addSpatialLogEntry;
-  spatialFeedback.onFeedbackEvent.current = addSpatialLogEntry;
+  useEffect(() => {
+    handOverDOM.onSpatialEvent.current = addSpatialLogEntry;
+    spatialFeedback.onFeedbackEvent.current = addSpatialLogEntry;
+  }, [addSpatialLogEntry, handOverDOM, spatialFeedback]);
 
   // --- UI state ---
   const [telemetryVisible, setTelemetryVisible] = useState(true);
@@ -186,9 +188,13 @@ export default function App() {
     // 2. Build spatial telemetry data from hand-over-DOM state
     const spatialMap = new Map<string, SpatialTelemetryData>();
     const spatialState = handOverDOM.handSpatialRef.current;
-    for (const [key, state] of Object.entries({ Left: spatialState.left, Right: spatialState.right })) {
+    const handEntries: Array<['Left' | 'Right', typeof spatialState.left]> = [
+      ['Left', spatialState.left],
+      ['Right', spatialState.right],
+    ];
+    for (const [handedness, state] of handEntries) {
       if (state?.stack) {
-        spatialMap.set(key as 'Left' | 'Right', {
+        spatialMap.set(handedness, {
           topElement: state.hoverTarget?.selector ?? null,
           topElementScore: state.hoverTarget?.relevanceScore ?? 0,
           isOverInteractive: state.isOverInteractive,
@@ -334,7 +340,6 @@ export default function App() {
     spatialIndex,
     handOverDOM,
     spatialFeedback,
-    grabbedId,
   ]);
 
   // Store latest runFrame in a ref so the RAF loop always calls the latest version
@@ -516,14 +521,18 @@ export default function App() {
       />
 
       {/* Spatial feedback overlays */}
-      <SpatialHighlight
-        handSpatialRef={handOverDOM.handSpatialRef}
-        visible={true}
-      />
-      <SpatialProximityFeedback
-        feedbackRef={spatialFeedback.feedbackRef}
-        visible={true}
-      />
+      <ErrorBoundary inline fallbackLabel="Spatial highlight error">
+        <SpatialHighlight
+          handSpatialRef={handOverDOM.handSpatialRef}
+          visible={true}
+        />
+      </ErrorBoundary>
+      <ErrorBoundary inline fallbackLabel="Proximity feedback error">
+        <SpatialProximityFeedback
+          feedbackRef={spatialFeedback.feedbackRef}
+          visible={true}
+        />
+      </ErrorBoundary>
 
       {/* Telemetry overlay — press T */}
       <ErrorBoundary inline fallbackLabel="Telemetry error">

@@ -20,19 +20,15 @@ interface HighlightDOMRefs {
   container: React.RefObject<HTMLDivElement | null>;
   tag: React.RefObject<HTMLSpanElement | null>;
   lastElement: { current: Element | null };
-  lastRect: { current: DOMRect | null };
 }
 
 export function SpatialHighlight({ handSpatialRef, visible }: SpatialHighlightProps) {
   const rightContainerRef = useRef<HTMLDivElement | null>(null);
   const rightTagRef = useRef<HTMLSpanElement | null>(null);
   const rightLastElement = useRef<Element | null>(null);
-  const rightLastRect = useRef<DOMRect | null>(null);
-
   const leftContainerRef = useRef<HTMLDivElement | null>(null);
   const leftTagRef = useRef<HTMLSpanElement | null>(null);
   const leftLastElement = useRef<Element | null>(null);
-  const leftLastRect = useRef<DOMRect | null>(null);
 
   const rafIdRef = useRef<number>(0);
   const visibleRef = useRef(visible);
@@ -41,7 +37,6 @@ export function SpatialHighlight({ handSpatialRef, visible }: SpatialHighlightPr
   function updateHighlight(
     state: HandSpatialState | null,
     refs: HighlightDOMRefs,
-    color: string,
   ): void {
     const container = refs.container.current;
     const tag = refs.tag.current;
@@ -50,21 +45,13 @@ export function SpatialHighlight({ handSpatialRef, visible }: SpatialHighlightPr
 
     if (!state || !state.hoverTarget) {
       container.style.display = 'none';
+      refs.lastElement.current = null;
       return;
     }
 
     const targetEl = state.hoverTarget.element;
-
-    if (targetEl !== refs.lastElement.current) {
-      refs.lastElement.current = targetEl;
-      refs.lastRect.current = targetEl.getBoundingClientRect();
-    }
-
-    const rect = refs.lastRect.current;
-    if (!rect) {
-      container.style.display = 'none';
-      return;
-    }
+    const rect = targetEl.getBoundingClientRect();
+    refs.lastElement.current = targetEl;
 
     container.style.display = 'block';
     container.style.width = `${rect.width}px`;
@@ -79,13 +66,11 @@ export function SpatialHighlight({ handSpatialRef, visible }: SpatialHighlightPr
       container: rightContainerRef,
       tag: rightTagRef,
       lastElement: rightLastElement,
-      lastRect: rightLastRect,
     };
     const leftRefs: HighlightDOMRefs = {
       container: leftContainerRef,
       tag: leftTagRef,
       lastElement: leftLastElement,
-      lastRect: leftLastRect,
     };
 
     function loop() {
@@ -99,8 +84,8 @@ export function SpatialHighlight({ handSpatialRef, visible }: SpatialHighlightPr
       }
 
       const { left, right } = handSpatialRef.current;
-      updateHighlight(right, rightRefs, COLORS.right);
-      updateHighlight(left, leftRefs, COLORS.left);
+      updateHighlight(right, rightRefs);
+      updateHighlight(left, leftRefs);
 
       rafIdRef.current = requestAnimationFrame(loop);
     }
@@ -109,8 +94,10 @@ export function SpatialHighlight({ handSpatialRef, visible }: SpatialHighlightPr
 
     return () => {
       cancelAnimationFrame(rafIdRef.current);
+      rightLastElement.current = null;
+      leftLastElement.current = null;
     };
-  }, [handSpatialRef]);
+  }, [handSpatialRef, visible]);
 
   if (!visible) return null;
 

@@ -23,6 +23,13 @@ export interface UseHandOverDOMReturn {
   clearHand: (handedness: 'Left' | 'Right') => void;
 }
 
+// Module level — zero closure dependency
+function areSameElement(a: SpatialElement | null, b: SpatialElement | null): boolean {
+  if (a === null && b === null) return true;
+  if (a === null || b === null) return false;
+  return a.element === b.element;
+}
+
 export function useHandOverDOM(options: UseHandOverDOMOptions): UseHandOverDOMReturn {
   const { spatialIndex, hoverEventIntervalMs = SPATIAL.HOVER_EVENT_INTERVAL_MS } = options;
 
@@ -37,12 +44,6 @@ export function useHandOverDOM(options: UseHandOverDOMOptions): UseHandOverDOMRe
   const emit = useCallback((event: SpatialEvent) => {
     onSpatialEvent.current?.(event);
   }, []);
-
-  const areSameElement = (a: SpatialElement | null, b: SpatialElement | null): boolean => {
-    if (a === null && b === null) return true;
-    if (a === null || b === null) return false;
-    return a.element === b.element;
-  };
 
   const updateHandPosition = useCallback((
     handedness: 'Left' | 'Right',
@@ -95,11 +96,12 @@ export function useHandOverDOM(options: UseHandOverDOMOptions): UseHandOverDOMRe
         hoverDurationMs: 0,
         isOverInteractive: newTarget?.isInteractive ?? false,
         previousTarget,
+        lastUpdateTimestamp: timestamp,
       };
     } else {
       // Same target — accumulate hover duration
       const prevDuration = current?.hoverDurationMs ?? 0;
-      const deltaMs = current ? timestamp - (current.stack.timestamp) : 0;
+      const deltaMs = current ? timestamp - current.lastUpdateTimestamp! : 0;
       const newDuration = prevDuration + Math.max(0, deltaMs);
 
       handSpatialRef.current[key] = {
@@ -109,6 +111,7 @@ export function useHandOverDOM(options: UseHandOverDOMOptions): UseHandOverDOMRe
         hoverDurationMs: newDuration,
         isOverInteractive: newTarget?.isInteractive ?? false,
         previousTarget: current?.previousTarget ?? null,
+        lastUpdateTimestamp: timestamp,
       };
 
       // Periodic hover events

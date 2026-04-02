@@ -95,31 +95,67 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     setObjects((prev) => {
       const updated = prev.map((obj) => {
         if (obj.id !== id) return obj;
-        // Clamp to screen bounds
         let x = Math.max(0, Math.min(position.x, window.innerWidth - obj.width));
         let y = Math.max(0, Math.min(position.y, window.innerHeight - obj.height));
 
-        // Snap to nearby objects when within threshold
+        // Find the closest snap candidate across all objects
         const snap = SPATIAL.SNAP_THRESHOLD;
+        let bestSnapX: number | null = null;
+        let bestSnapDistX = snap;
+        let bestSnapY: number | null = null;
+        let bestSnapDistY = snap;
+        let snapTargetId: string | null = null;
+
         for (const other of prev) {
           if (other.id === id) continue;
-          // Snap left edge to left edge
-          if (Math.abs(x - other.x) < snap) x = other.x;
-          // Snap left edge to right edge
-          else if (Math.abs(x - (other.x + other.width)) < snap) x = other.x + other.width;
-          // Snap right edge to left edge
-          else if (Math.abs((x + obj.width) - other.x) < snap) x = other.x - obj.width;
-          // Snap right edge to right edge
-          else if (Math.abs((x + obj.width) - (other.x + other.width)) < snap) x = other.x + other.width - obj.width;
 
-          // Snap top edge to top edge
-          if (Math.abs(y - other.y) < snap) y = other.y;
-          // Snap top edge to bottom edge
-          else if (Math.abs(y - (other.y + other.height)) < snap) y = other.y + other.height;
-          // Snap bottom edge to top edge
-          else if (Math.abs((y + obj.height) - other.y) < snap) y = other.y - obj.height;
-          // Snap bottom edge to bottom edge
-          else if (Math.abs((y + obj.height) - (other.y + other.height)) < snap) y = other.y + other.height - obj.height;
+          // Check all X edge alignments
+          const xCandidates = [
+            { snappedX: other.x, dist: Math.abs(x - other.x) },                                    // left-to-left
+            { snappedX: other.x + other.width, dist: Math.abs(x - (other.x + other.width)) },       // left-to-right
+            { snappedX: other.x - obj.width, dist: Math.abs((x + obj.width) - other.x) },           // right-to-left
+            { snappedX: other.x + other.width - obj.width, dist: Math.abs((x + obj.width) - (other.x + other.width)) }, // right-to-right
+          ];
+
+          for (const c of xCandidates) {
+            if (c.dist < bestSnapDistX) {
+              bestSnapDistX = c.dist;
+              bestSnapX = c.snappedX;
+              snapTargetId = other.id;
+            }
+          }
+
+          // Check all Y edge alignments
+          const yCandidates = [
+            { snappedY: other.y, dist: Math.abs(y - other.y) },
+            { snappedY: other.y + other.height, dist: Math.abs(y - (other.y + other.height)) },
+            { snappedY: other.y - obj.height, dist: Math.abs((y + obj.height) - other.y) },
+            { snappedY: other.y + other.height - obj.height, dist: Math.abs((y + obj.height) - (other.y + other.height)) },
+          ];
+
+          for (const c of yCandidates) {
+            if (c.dist < bestSnapDistY) {
+              bestSnapDistY = c.dist;
+              bestSnapY = c.snappedY;
+              if (!snapTargetId) snapTargetId = other.id;
+            }
+          }
+        }
+
+        // Apply snap only if it doesn't cause overlap with the snap target
+        if (bestSnapX !== null) {
+          const snappedObj = { ...obj, x: bestSnapX, y };
+          const target = prev.find((o) => o.id === snapTargetId);
+          if (!target || !objectsOverlap(snappedObj as DraggableObjectData, target)) {
+            x = bestSnapX;
+          }
+        }
+        if (bestSnapY !== null) {
+          const snappedObj = { ...obj, x, y: bestSnapY };
+          const target = prev.find((o) => o.id === snapTargetId);
+          if (!target || !objectsOverlap(snappedObj as DraggableObjectData, target)) {
+            y = bestSnapY;
+          }
         }
 
         return { ...obj, x, y };

@@ -82,8 +82,8 @@ export function SpatialProximityFeedback({
   const containerRef = useRef<HTMLDivElement>(null);
   const slotsRef = useRef<FeedbackSlot[]>([]);
   const rafRef = useRef<number>(0);
-  // Track which elements we have applied box-shadow to so we can clean up.
-  const styledElementsRef = useRef<Set<Element>>(new Set());
+  // Track which elements we have applied box-shadow to so we can restore originals.
+  const styledElementsRef = useRef<Map<Element, string>>(new Map());
 
   // ------------------------------------------------------------------
   // Build pre-allocated slots once the container mounts
@@ -110,7 +110,10 @@ export function SpatialProximityFeedback({
   // RAF loop
   // ------------------------------------------------------------------
   useEffect(() => {
+    let cancelled = false;
+
     const frame = () => {
+      if (cancelled) return;
       rafRef.current = requestAnimationFrame(frame);
 
       const slots = slotsRef.current;
@@ -120,9 +123,9 @@ export function SpatialProximityFeedback({
       const hands: Array<DragSpatialFeedback | null> = [fb.left, fb.right];
 
       if (!visible || hands.every((h) => h === null)) {
-        // Hide all slots and remove all glows
+        // Hide all slots and restore all glows
         for (const slot of slots) hideSlot(slot);
-        clearAllGlows(styledElementsRef.current);
+        restoreAllGlows(styledElementsRef.current);
         return;
       }
 
@@ -147,7 +150,7 @@ export function SpatialProximityFeedback({
       }
 
       // Determine which elements will be styled this frame
-      const nextStyled = new Set<Element>();
+      const nextStyled = new Map<Element, string>();
 
       for (let i = 0; i < MAX_TARGETS; i++) {
         const slot = slots[i];
@@ -181,10 +184,14 @@ export function SpatialProximityFeedback({
 
         // Only mutate when the value actually changed (avoid style thrash)
         const htmlTargetEl = targetEl as HTMLElement;
+        if (!styledElementsRef.current.has(targetEl)) {
+          nextStyled.set(targetEl, htmlTargetEl.style.boxShadow);
+        } else {
+          nextStyled.set(targetEl, styledElementsRef.current.get(targetEl)!);
+        }
         if (htmlTargetEl.style && htmlTargetEl.style.boxShadow !== newBoxShadow) {
           htmlTargetEl.style.boxShadow = newBoxShadow;
         }
-        nextStyled.add(targetEl);
 
         // ---- 2. Alignment guide --------------------------------------------
         const guide = slot.guide;
@@ -254,10 +261,10 @@ export function SpatialProximityFeedback({
         }
       }
 
-      // Clean up glows for elements that left proximity this frame
-      for (const el of styledElementsRef.current) {
+      // Restore glows for elements that left proximity this frame
+      for (const [el, original] of styledElementsRef.current) {
         if (!nextStyled.has(el)) {
-          (el as HTMLElement).style.boxShadow = '';
+          (el as HTMLElement).style.boxShadow = original;
         }
       }
       styledElementsRef.current = nextStyled;
@@ -266,10 +273,11 @@ export function SpatialProximityFeedback({
     rafRef.current = requestAnimationFrame(frame);
 
     return () => {
+      cancelled = true;
       cancelAnimationFrame(rafRef.current);
-      // Clean up any residual glows on unmount
-      clearAllGlows(styledElementsRef.current);
-      styledElementsRef.current = new Set();
+      // Restore any residual glows on unmount
+      restoreAllGlows(styledElementsRef.current);
+      styledElementsRef.current.clear();
     };
   }, [feedbackRef, visible]);
 
@@ -290,9 +298,9 @@ export function SpatialProximityFeedback({
 // Utility
 // ---------------------------------------------------------------------------
 
-function clearAllGlows(elements: Set<Element>): void {
-  for (const el of elements) {
-    (el as HTMLElement).style.boxShadow = '';
+function restoreAllGlows(elements: Map<Element, string>): void {
+  for (const [el, original] of elements) {
+    (el as HTMLElement).style.boxShadow = original;
   }
   elements.clear();
 }

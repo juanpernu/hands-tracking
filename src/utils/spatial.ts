@@ -44,12 +44,12 @@ function hasListenerAttributes(el: Element): boolean {
   return false;
 }
 
-export function scoreElement(el: Element): number {
+export function scoreElement(el: Element, rect?: DOMRect): number {
   let score = 0;
   if (isSemanticInteractive(el)) score += SPATIAL.SCORE_SEMANTIC_INTERACTIVE;
   if (hasListenerAttributes(el)) score += SPATIAL.SCORE_HAS_LISTENERS;
-  const rect = el.getBoundingClientRect();
-  if (rect.width > SPATIAL.MIN_ELEMENT_WIDTH && rect.height > SPATIAL.MIN_ELEMENT_HEIGHT) {
+  const r = rect ?? el.getBoundingClientRect();
+  if (r.width > SPATIAL.MIN_ELEMENT_WIDTH && r.height > SPATIAL.MIN_ELEMENT_HEIGHT) {
     score += SPATIAL.SCORE_MIN_DIMENSIONS;
   }
   if (isGenericContainer(el)) score += SPATIAL.SCORE_GENERIC_CONTAINER;
@@ -141,7 +141,7 @@ export function computeProximity(
 export function filterAndScoreStack(elements: Element[]): SpatialElement[] {
   return elements.map((el) => {
     const rect = el.getBoundingClientRect();
-    const score = scoreElement(el);
+    const score = scoreElement(el, rect);
     return {
       element: el,
       tagName: el.tagName,
