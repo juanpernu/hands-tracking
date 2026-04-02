@@ -22,6 +22,22 @@ import { useTelemetryLogger } from './hooks/useTelemetryLogger';
 import { useBatchTelemetry } from './hooks/useBatchTelemetry';
 import { useWindowSize } from './hooks/useWindowSize';
 import { magnitude3 } from './utils/geometry';
+import { usePluginRegistry } from './plugins/hooks/usePluginRegistry';
+import { useActionDispatcher } from './plugins/hooks/useActionDispatcher';
+import { useAgentBridge } from './agent/hooks/useAgentBridge';
+import { useContextBuffer } from './agent/hooks/useContextBuffer';
+import { useGestureInterpreter } from './agent/hooks/useGestureInterpreter';
+import { useActionToast, ActionToastDisplay } from './components/ActionToast';
+import {
+  fullscreenPlugin,
+  navigationPlugin,
+  tabsPlugin,
+  clipboardPlugin,
+  speechPlugin,
+  notificationsPlugin,
+} from './plugins/built-in';
+import type { GestureMapping } from './agent/types';
+import type { ActionIntent } from './plugins/types';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
 
@@ -65,6 +81,15 @@ function readTimeline(buf: TimelineRingBuffer, cutoff: number): TimelineEntry[] 
 const MemoEventLog = memo(EventLog);
 const MemoDualHandHUD = memo(DualHandHUD);
 
+const defaultMappings: GestureMapping[] = [
+  { gesture: 'clap', action: 'browser.fullscreen:toggle' },
+  { gesture: 'shake', action: 'dom.navigation:go-back' },
+  { gesture: 'swipe-left', action: 'dom.navigation:go-back' },
+  { gesture: 'swipe-right', action: 'dom.navigation:go-forward' },
+  { gesture: 'both-spread', action: 'dom.tabs:close-tab' },
+  { gesture: 'both-pinch', action: 'dom.tabs:open-tab' },
+];
+
 // ---- App ---------------------------------------------------------------------
 
 export default function App() {
@@ -81,12 +106,35 @@ export default function App() {
   // --- Analysis + interaction hooks ---
   const { physicsData, gripData, motionData, gripRef, computeFrame } = useHandAnalysis();
   const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake } =
-    useInteractionController();
+    useInteractionController({ onGestureEvent: interpreter.handle });
 
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
   const { log, processFrame, clearLog, exportLog, onClapRef } = useTelemetryLogger();
   const { record: recordBatch } = useBatchTelemetry();
+
+  // --- Agent + Plugin hooks ---
+  const registry = usePluginRegistry([
+    fullscreenPlugin, navigationPlugin, tabsPlugin,
+    clipboardPlugin, speechPlugin, notificationsPlugin,
+  ]);
+  const dispatcher = useActionDispatcher(registry);
+  const bridge = useAgentBridge({ enabled: false });
+  const contextBuffer = useContextBuffer({ maxEvents: 50, maxMs: 10000 });
+  const { toasts, addToast } = useActionToast();
+
+  const handleAction = useCallback(async (intent: ActionIntent) => {
+    const result = await dispatcher.dispatch(intent);
+    addToast(intent.action, `${intent.plugin}:${intent.action}`, result);
+    return result;
+  }, [dispatcher, addToast]);
+
+  const interpreter = useGestureInterpreter({
+    mappings: defaultMappings,
+    buffer: contextBuffer,
+    bridge,
+    onAction: handleAction,
+  });
 
   // --- UI state ---
   const [telemetryVisible, setTelemetryVisible] = useState(true);
@@ -286,6 +334,7 @@ export default function App() {
   // Clap → screenshot via canvas capture
   useEffect(() => {
     onClapRef.current = () => {
+      interpreter.handle({ type: 'clap', hands: handsRef.current, timestamp: performance.now() });
       setFlashActive(true);
       setTimeout(() => setFlashActive(false), 200);
 
@@ -331,7 +380,7 @@ export default function App() {
       link.href = canvas.toDataURL('image/png');
       link.click();
     };
-  }, [onClapRef, containerRef]);
+  }, [onClapRef, containerRef, interpreter]);
 
   const primaryGrip = gripData[0];
 
@@ -443,6 +492,8 @@ export default function App() {
           </DraggablePanel>
         </>
       )}
+
+      <ActionToastDisplay toasts={toasts} />
     </div>
   );
 }
