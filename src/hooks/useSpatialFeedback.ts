@@ -76,21 +76,26 @@ export function useSpatialFeedback(options: UseSpatialFeedbackOptions): UseSpati
     const proximities = spatialIndex.getProximities(proximityThreshold);
 
     // Filter to only contacts/proximities involving the dragged element
+    // Exclude generic containers (no data-object-id) — they are full-viewport
+    // divs that overlap with everything and produce false positives.
+    const isRelevantTarget = (el: SpatialElement): boolean =>
+      el.element !== draggedElement && el.element.hasAttribute('data-object-id');
+
     const relevantContacts: Array<{ target: SpatialElement; contact: ElementContact }> = [];
     const relevantProximities: Array<{ target: SpatialElement; proximity: ElementProximity }> = [];
 
     for (const c of contacts) {
-      if (c.elementA.element === draggedElement) {
+      if (c.elementA.element === draggedElement && isRelevantTarget(c.elementB)) {
         relevantContacts.push({ target: c.elementB, contact: c });
-      } else if (c.elementB.element === draggedElement) {
+      } else if (c.elementB.element === draggedElement && isRelevantTarget(c.elementA)) {
         relevantContacts.push({ target: c.elementA, contact: c });
       }
     }
 
     for (const p of proximities) {
-      if (p.elementA.element === draggedElement) {
+      if (p.elementA.element === draggedElement && isRelevantTarget(p.elementB)) {
         relevantProximities.push({ target: p.elementB, proximity: p });
-      } else if (p.elementB.element === draggedElement) {
+      } else if (p.elementB.element === draggedElement && isRelevantTarget(p.elementA)) {
         relevantProximities.push({ target: p.elementA, proximity: p });
       }
     }
