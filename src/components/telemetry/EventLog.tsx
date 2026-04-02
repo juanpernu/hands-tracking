@@ -16,6 +16,14 @@ const EVENT_COLORS: Record<string, string> = {
   'grip-change': '#27C93F',
   'motion-detected': '#c084fc',
   'snapshot': 'rgba(255,255,255,0.25)',
+  // Spatial interaction events
+  'hand-enter-element': '#4ECDC4',
+  'hand-leave-element': '#95A5A6',
+  'hand-hover': '#3498DB',
+  'element-contact': '#E74C3C',
+  'element-separate': '#BDC3C7',
+  'proximity-alert': '#F39C12',
+  'drag-snap': '#2ECC71',
 };
 
 function formatTime(timestamp: number): string {
