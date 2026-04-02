@@ -1,4 +1,5 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo, memo } from 'react';
+import type { CSSProperties } from 'react';
 import { DraggableObject } from './components/DraggableObject';
 import HandCursor from './components/HandCursor';
 import CameraPreview from './components/CameraPreview';
@@ -14,89 +15,117 @@ import { useHandTracking } from './hooks/useHandTracking';
 import { useGestureDetection } from './hooks/useGestureDetection';
 import { useMouseFallback } from './hooks/useMouseFallback';
 import { useObjectManagement } from './hooks/useObjectManagement';
-import { useHandPhysics } from './hooks/useHandPhysics';
-import { useGripDetection } from './hooks/useGripDetection';
-import { useMotionRecognition } from './hooks/useMotionRecognition';
+import { useHandAnalysis } from './hooks/useHandAnalysis';
+import { useInteractionController } from './hooks/useInteractionController';
 import { useTelemetryRecorder } from './hooks/useTelemetryRecorder';
 import { useTelemetryLogger } from './hooks/useTelemetryLogger';
 import { useBatchTelemetry } from './hooks/useBatchTelemetry';
 import { useWindowSize } from './hooks/useWindowSize';
-import { usePanelCollisions } from './hooks/usePanelCollisions';
-import { useObjectTracker } from './hooks/useObjectTracker';
-import { normalizedToPixel, magnitude3 } from './utils/geometry';
-import type { GestureState } from './types';
-import type { HandPhysics as HandPhysicsType, GripState, MotionPattern } from './types/telemetry';
+import { magnitude3 } from './utils/geometry';
 
-// Edge proximity threshold — how close (in normalized 0-1) to trigger warning
-const EDGE_THRESHOLD = 0.08;
+// ---- Ring buffer for timeline entries ----------------------------------------
+
+const TIMELINE_CAPACITY = 300;
+const TIMELINE_WINDOW_MS = 5000;
+
+interface TimelineEntry {
+  timestamp: number;
+  gesture: string;
+  velocity: number;
+}
+
+interface TimelineRingBuffer {
+  data: TimelineEntry[];
+  head: number;
+  size: number;
+}
+
+function makeTimelineBuffer(): TimelineRingBuffer {
+  return { data: new Array(TIMELINE_CAPACITY), head: 0, size: 0 };
+}
+
+function pushTimeline(buf: TimelineRingBuffer, entry: TimelineEntry): void {
+  buf.data[buf.head] = entry;
+  buf.head = (buf.head + 1) % TIMELINE_CAPACITY;
+  if (buf.size < TIMELINE_CAPACITY) buf.size++;
+}
+
+function readTimeline(buf: TimelineRingBuffer, cutoff: number): TimelineEntry[] {
+  const out: TimelineEntry[] = [];
+  const start = buf.size < TIMELINE_CAPACITY ? 0 : buf.head;
+  for (let i = 0; i < buf.size; i++) {
+    const entry = buf.data[(start + i) % TIMELINE_CAPACITY];
+    if (entry && entry.timestamp > cutoff) out.push(entry);
+  }
+  return out;
+}
+
+// ---- Memoised child components -----------------------------------------------
+
+const MemoEventLog = memo(EventLog);
+const MemoDualHandHUD = memo(DualHandHUD);
+
+// ---- App ---------------------------------------------------------------------
 
 export default function App() {
   const windowSize = useWindowSize();
-  const panelCollisions = usePanelCollisions();
+  const W = windowSize.width;
+  const H = windowSize.height;
 
   // --- Core hooks ---
   const { hands, isReady, error, videoRef } = useHandTracking();
   const detectGesture = useGestureDetection();
-  const { position: mousePos, isGrabbing: mouseGrabbing, containerRef } = useMouseFallback();
-  const { objects, addObject, removeObject, moveObject, hitTest, clearAll } = useObjectManagement(0);
+  const { positionRef: mousePosRef, isGrabbing: mouseGrabbing, containerRef } = useMouseFallback();
+  const { objects, addObject, removeObject, moveObject, hitTest } = useObjectManagement(0);
 
-  // --- Object tracking ---
-  const objectTracker = useObjectTracker();
+  // --- Analysis + interaction hooks ---
+  const { physicsData, gripData, motionData, gripRef, computeFrame } = useHandAnalysis();
+  const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake } =
+    useInteractionController();
 
   // --- Telemetry hooks ---
-  const computePhysics = useHandPhysics();
-  const detectGrip = useGripDetection();
-  const classifyMotion = useMotionRecognition();
   const { record } = useTelemetryRecorder();
-  const { log, processFrame, addEntry: addLogEntry, clearLog, exportLog, onClapRef } = useTelemetryLogger();
-  const { record: recordBatch } = useBatchTelemetry({ maxFrames: 500, maxIntervalMs: 10_000, enabled: true });
+  const { log, processFrame, clearLog, exportLog } = useTelemetryLogger();
+  const { record: recordBatch } = useBatchTelemetry();
 
-  // --- Refs & state ---
+  // --- UI state ---
+  const [telemetryVisible, setTelemetryVisible] = useState(true);
+  const [fps, setFps] = useState(0);
+
+  // --- Refs ---
   const cursorRef = useRef<HTMLDivElement>(null);
   const gripIndicatorRef = useRef<HTMLDivElement>(null);
-  const [gestureState, setGestureState] = useState<GestureState>('idle');
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [grabbedId, setGrabbedId] = useState<string | null>(null);
-  const [grabbedIdLeft, setGrabbedIdLeft] = useState<string | null>(null);
-  const grabOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const grabOffsetLeftRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  // --- Shake-to-clear detection ---
-  // Simple approach: count consecutive high-velocity frames. Your telemetry shows
-  // sustained velocity spikes every ~300ms when shaking. 5 fast frames in a row = shake.
-  const shakeRef = useRef<{ fastFrames: number; lastClearTime: number }>({
-    fastFrames: 0,
-    lastClearTime: 0,
-  });
-  const SHAKE_SPEED_THRESHOLD = 0.3;    // ~360px/s — your shakes are 500-2000px/s
-  const SHAKE_FRAMES_NEEDED = 5;        // 5 fast frames in a row (~150ms at 30fps)
-  const SHAKE_CLEAR_DEBOUNCE_MS = 1500;
-  const shakeClearingRef = useRef(false);
-
-  // --- Per-hand grip state ---
-  const [partialLowGrabLeft, setPartialLowGrabLeft] = useState(false);
-  const [partialLowGrabRight, setPartialLowGrabRight] = useState(false);
-
-  // --- Edge proximity state ---
-  const [edgeWarning, setEdgeWarning] = useState<'none' | 'near' | 'out'>('none');
-
-  // --- Telemetry state (UI-bound) ---
-  const [telemetryVisible, setTelemetryVisible] = useState(true);
-  const [physicsData, setPhysicsData] = useState<HandPhysicsType[]>([]);
-  const [gripData, setGripData] = useState<GripState[]>([]);
-  const [motionData, setMotionData] = useState<MotionPattern[]>([]);
-  const [fps, setFps] = useState(0);
-  const [timelineEntries, setTimelineEntries] = useState<Array<{ timestamp: number; gesture: string; velocity: number }>>([]);
-
-  // FPS counter
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
 
-  const useHands = isReady && hands.length > 0;
-  const W = windowSize.width;
-  const H = windowSize.height;
+  // Ring buffer for timeline entries (never reallocated)
+  const timelineBufferRef = useRef<TimelineRingBuffer>(makeTimelineBuffer());
+  // Throttled reactive copy of timeline for rendering
+  const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([]);
+  const lastTimelineUpdateRef = useRef(0);
 
-  const updateInteraction = useCallback(() => {
+  // Keep latest hands/objects accessible from RAF without stale closures
+  const handsRef = useRef(hands);
+  handsRef.current = hands;
+  const objectsRef = useRef(objects);
+  objectsRef.current = objects;
+  const isReadyRef = useRef(isReady);
+  isReadyRef.current = isReady;
+  const WRef = useRef(W);
+  WRef.current = W;
+  const HRef = useRef(H);
+  HRef.current = H;
+  const mouseGrabbingRef = useRef(mouseGrabbing);
+  mouseGrabbingRef.current = mouseGrabbing;
+
+  // --- Main RAF interaction loop ---
+  const rafCallbackRef = useRef<() => void>(() => {});
+
+  const runFrame = useCallback(() => {
     const now = performance.now();
+    const currentHands = handsRef.current;
+    const currentObjects = objectsRef.current;
+    const currentW = WRef.current;
+    const currentH = HRef.current;
 
     // FPS tracking
     fpsRef.current.count++;
@@ -106,232 +135,97 @@ export default function App() {
       fpsRef.current.lastTime = now;
     }
 
-    let cursorPixel: { x: number; y: number };
-    let isPinching: boolean;
-    let isBothPinching: boolean;
-    let isBothSpreading: boolean;
+    const useHands = isReadyRef.current && currentHands.length > 0;
 
-    // --- Telemetry computation (BOTH hands) ---
-    const physics = computePhysics(hands, now);
-    const grips = detectGrip(hands, now);
-    const motions = physics.map((p) => classifyMotion(p, now));
+    // 1. Compute analysis (physics, grip, motion) — writes to refs + throttled setState
+    const { physicsData: physics, gripData: grips, motionData: motions } = computeFrame(
+      currentHands,
+      now,
+    );
 
-    setPhysicsData(physics);
-    setGripData(grips);
-    setMotionData(motions);
+    // 2. Record telemetry
+    record(currentHands, physics, grips, motions, now);
+    recordBatch(currentHands, physics, grips, motions, now);
+    processFrame(currentHands, physics, grips, motions, now);
 
-    // Detect partial-low grip for BOTH hands
-    const leftGrip = grips.find((g) => g.handedness === 'Left');
-    const rightGrip = grips.find((g) => g.handedness === 'Right');
+    // 3. Shake-to-clear
+    updateShake(currentHands, physics, currentObjects, removeObject, now);
 
-    if (leftGrip) {
-      const open = leftGrip.opennessRatio;
-      setPartialLowGrabLeft(partialLowGrabLeft ? open < 0.8 : open < 0.65);
-    } else {
-      setPartialLowGrabLeft(false);
+    // 4. Detect gesture
+    const gesture = detectGesture(currentHands);
+
+    // 5. Run interaction controller — returns cursor pixel + resolved gesture or null
+    const result = update(
+      {
+        hands: currentHands,
+        isReady: isReadyRef.current,
+        useHands,
+        gesture,
+        mousePos: mousePosRef.current,
+        mouseGrabbing: mouseGrabbingRef.current,
+        objects: currentObjects,
+        hitTest,
+        addObject,
+        removeObject,
+        moveObject,
+        gripData: grips,
+        W: currentW,
+        H: currentH,
+      },
+    );
+
+    // 6. Drive cursor imperatively
+    if (result && cursorRef.current) {
+      cursorRef.current.style.transform = `translate3d(${result.cursorPixel.x}px, ${result.cursorPixel.y}px, 0)`;
+    }
+    if (result && gripIndicatorRef.current) {
+      gripIndicatorRef.current.style.transform = `translate3d(${result.cursorPixel.x}px, ${result.cursorPixel.y}px, 0)`;
     }
 
-    if (rightGrip) {
-      const open = rightGrip.opennessRatio;
-      setPartialLowGrabRight(partialLowGrabRight ? open < 0.8 : open < 0.65);
-    } else {
-      setPartialLowGrabRight(false);
-    }
-
-    // --- Edge detection: check if any hand is near screen edges ---
-    if (isReady && hands.length === 0) {
-      setEdgeWarning('out');
-    } else if (hands.length > 0) {
-      let nearEdge = false;
-      for (const hand of hands) {
-        for (const lm of [hand.landmarks[0], hand.landmarks[8]]) { // wrist + index tip
-          if (
-            lm.x < EDGE_THRESHOLD || lm.x > 1 - EDGE_THRESHOLD ||
-            lm.y < EDGE_THRESHOLD || lm.y > 1 - EDGE_THRESHOLD
-          ) {
-            nearEdge = true;
-            break;
-          }
-        }
-        if (nearEdge) break;
-      }
-      setEdgeWarning(nearEdge ? 'near' : 'none');
-    } else {
-      setEdgeWarning('none');
-    }
-
-    // Record + log
-    record(hands, physics, grips, motions, now);
-    recordBatch(hands, physics, grips, motions, now);
-    processFrame(hands, physics, grips, motions, now);
-
-    // --- Shake-to-clear: count consecutive fast frames ---
-    if (physics.length > 0 && now - shakeRef.current.lastClearTime > SHAKE_CLEAR_DEBOUNCE_MS) {
-      const maxSpeed = Math.max(...physics.map((p) => magnitude3(p.palmVelocity)));
-
-      if (maxSpeed > SHAKE_SPEED_THRESHOLD) {
-        shakeRef.current.fastFrames++;
-      } else {
-        // Decay slowly — allow brief dips between oscillations
-        if (shakeRef.current.fastFrames > 0) shakeRef.current.fastFrames--;
-      }
-
-      if (shakeRef.current.fastFrames >= SHAKE_FRAMES_NEEDED && objects.length > 0 && !shakeClearingRef.current) {
-        shakeClearingRef.current = true;
-        shakeRef.current.lastClearTime = now;
-        shakeRef.current.fastFrames = 0;
-        const ids = objects.map((o) => o.id);
-        ids.forEach((id, i) => {
-          setTimeout(() => {
-            removeObject(id);
-            if (i === ids.length - 1) shakeClearingRef.current = false;
-          }, i * 80);
-        });
-      }
-    }
-
-    // Timeline entry
+    // 7. Update timeline ring buffer
     const primaryPhysics = physics[0];
-    const primarySpeed = primaryPhysics ? magnitude3(primaryPhysics.palmVelocity) * W : 0;
+    const primarySpeed = primaryPhysics ? magnitude3(primaryPhysics.palmVelocity) * currentW : 0;
+    const tlEntry: TimelineEntry = {
+      timestamp: now,
+      gesture: result ? result.resolvedGestureState : 'idle',
+      velocity: primarySpeed,
+    };
+    pushTimeline(timelineBufferRef.current, tlEntry);
 
-    if (useHands) {
-      const gesture = detectGesture(hands);
-      if (!gesture.primaryCursor) return;
-      cursorPixel = normalizedToPixel(gesture.primaryCursor, W, H);
-      isPinching = gesture.isPinching;
-      isBothPinching = gesture.isBothPinching;
-      isBothSpreading = gesture.isBothSpreading;
-    } else {
-      cursorPixel = normalizedToPixel(mousePos, W, H);
-      isPinching = mouseGrabbing;
-      isBothPinching = false;
-      isBothSpreading = false;
+    // Throttle reactive timeline update to ~10fps
+    if (now - lastTimelineUpdateRef.current >= 100) {
+      lastTimelineUpdateRef.current = now;
+      const cutoff = now - TIMELINE_WINDOW_MS;
+      setTimelineEntries(readTimeline(timelineBufferRef.current, cutoff));
     }
+  }, [
+    computeFrame,
+    record,
+    recordBatch,
+    processFrame,
+    updateShake,
+    detectGesture,
+    update,
+    hitTest,
+    addObject,
+    removeObject,
+    moveObject,
+    mousePosRef,
+  ]);
 
-    // Drive cursor + grip indicator imperatively
-    if (cursorRef.current) {
-      cursorRef.current.style.transform = `translate3d(${cursorPixel.x}px, ${cursorPixel.y}px, 0)`;
-    }
-    if (gripIndicatorRef.current) {
-      gripIndicatorRef.current.style.transform = `translate3d(${cursorPixel.x}px, ${cursorPixel.y}px, 0)`;
-    }
+  // Store latest runFrame in a ref so the RAF loop always calls the latest version
+  rafCallbackRef.current = runFrame;
 
-    const hovered = hitTest(cursorPixel);
-    setHoveredId(hovered);
-
-    // Gesture state
-    let newGestureState: GestureState = 'idle';
-
-    if (isBothSpreading && hovered) {
-      removeObject(hovered);
-      newGestureState = 'deleting';
-    } else if (isBothPinching) {
-      addObject(cursorPixel);
-      newGestureState = 'creating';
-    } else if (isPinching) {
-      if (grabbedId) {
-        moveObject(grabbedId, {
-          x: cursorPixel.x - grabOffsetRef.current.x,
-          y: cursorPixel.y - grabOffsetRef.current.y,
-        });
-        newGestureState = 'grabbing';
-      } else if (hovered) {
-        const obj = objects.find((o) => o.id === hovered);
-        if (obj) {
-          grabOffsetRef.current = { x: cursorPixel.x - obj.x, y: cursorPixel.y - obj.y };
-          setGrabbedId(hovered);
-          newGestureState = 'grabbing';
-        }
-      }
-    } else {
-      if (grabbedId) setGrabbedId(null);
-      newGestureState = hovered ? 'hovering' : 'idle';
-    }
-
-    // Left hand grab — responds to pinch OR partial grip
-    if (useHands) {
-      const leftHand = hands.find((h) => h.handedness === 'Left');
-      if (leftHand) {
-        const leftPinchDist = Math.hypot(
-          leftHand.landmarks[4].x - leftHand.landmarks[8].x,
-          leftHand.landmarks[4].y - leftHand.landmarks[8].y,
-        );
-        const leftIsPinching = leftPinchDist < 0.07;
-        const leftIsGrabbing = leftIsPinching || partialLowGrabLeft;
-
-        if (leftIsGrabbing) {
-          const leftCursor = normalizedToPixel({ x: leftHand.landmarks[8].x, y: leftHand.landmarks[8].y }, W, H);
-          if (grabbedIdLeft) {
-            moveObject(grabbedIdLeft, {
-              x: leftCursor.x - grabOffsetLeftRef.current.x,
-              y: leftCursor.y - grabOffsetLeftRef.current.y,
-            });
-          } else {
-            const leftHovered = hitTest(leftCursor);
-            if (leftHovered && leftHovered !== grabbedId) {
-              const obj = objects.find((o) => o.id === leftHovered);
-              if (obj) {
-                grabOffsetLeftRef.current = { x: leftCursor.x - obj.x, y: leftCursor.y - obj.y };
-                setGrabbedIdLeft(leftHovered);
-              }
-            }
-          }
-        } else {
-          if (grabbedIdLeft) setGrabbedIdLeft(null);
-        }
-      } else {
-        if (grabbedIdLeft) setGrabbedIdLeft(null);
-      }
-    } else {
-      if (grabbedIdLeft) setGrabbedIdLeft(null);
-    }
-
-    setGestureState(newGestureState);
-
-    // --- Track DOM object movement ---
-    const trackedObjects = objectTracker.update(objects, grabbedId, grabbedIdLeft);
-    for (const t of trackedObjects) {
-      const hand = t.grabbedBy === 'mouse' ? 'Right' as const : (t.grabbedBy ?? 'Right' as const);
-
-      // Grab start: just grabbed and hasn't moved yet
-      if (t.isGrabbed && t.grabStartTime > 0 && t.totalDistance < 1) {
-        addLogEntry({
-          timestamp: now,
-          type: 'object-grab',
-          handedness: hand,
-          description: `${hand} grabbed ${t.type} at (${t.x.toFixed(0)}, ${t.y.toFixed(0)})`,
-          data: { palmPosition: { x: t.x, y: t.y, z: 0 } },
-        });
-      }
-
-      // Release: totalDistance goes negative on the frame it's released
-      if (t.totalDistance < 0) {
-        const movedPx = Math.abs(t.totalDistance);
-        addLogEntry({
-          timestamp: now,
-          type: 'object-release',
-          handedness: hand,
-          description: `Released ${t.type} at (${t.x.toFixed(0)}, ${t.y.toFixed(0)}) — moved ${movedPx.toFixed(0)}px`,
-          data: { velocity: t.speed, palmPosition: { x: t.x, y: t.y, z: 0 } },
-        });
-        // Reset so it only fires once
-        t.totalDistance = 0;
-      }
-    }
-
-    setTimelineEntries((prev) => {
-      const entry = { timestamp: now, gesture: newGestureState, velocity: primarySpeed };
-      const cutoff = now - 5000;
-      const filtered = prev.length > 300 ? prev.slice(-200) : prev;
-      return [...filtered.filter((e) => e.timestamp > cutoff), entry];
-    });
-  }, [useHands, hands, detectGesture, mousePos, mouseGrabbing, hitTest, grabbedId, grabbedIdLeft, partialLowGrabLeft, partialLowGrabRight, objects, addObject, removeObject, moveObject, computePhysics, detectGrip, classifyMotion, record, recordBatch, processFrame, addLogEntry, objectTracker, clearAll, W, H, isReady]);
-
+  // Single RAF loop — kicks off on mount, cleans up on unmount
   useEffect(() => {
-    updateInteraction();
-  }, [updateInteraction]);
-
-  const primaryGrip = gripData[0];
+    let rafId: number;
+    function loop() {
+      rafCallbackRef.current();
+      rafId = requestAnimationFrame(loop);
+    }
+    rafId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
 
   const handleExport = useCallback(() => {
     const data = exportLog();
@@ -344,79 +238,31 @@ export default function App() {
     URL.revokeObjectURL(url);
   }, [exportLog]);
 
-  // Screenshot state for flash effect
-  const [flashActive, setFlashActive] = useState(false);
+  // ---- Memoised derived values -----------------------------------------------
 
-  // Clap → screenshot via canvas capture
-  useEffect(() => {
-    onClapRef.current = () => {
-      setFlashActive(true);
-      setTimeout(() => setFlashActive(false), 200);
+  // Hand cursors for draggable panels — stable as long as hands/gripData don't change
+  const panelHandCursors = useMemo(() => {
+    const liveGrip = gripRef.current;
+    return hands.map((hand) => {
+      const grip = liveGrip.find((g) => g.handedness === hand.handedness);
+      const isPinching =
+        hand.landmarks[4] && hand.landmarks[8]
+          ? Math.hypot(
+              hand.landmarks[4].x - hand.landmarks[8].x,
+              hand.landmarks[4].y - hand.landmarks[8].y,
+            ) < 0.07
+          : false;
+      const isPartialLow = grip ? grip.opennessRatio < 0.65 : false;
+      const px = (1 - hand.landmarks[8].x) * W;
+      const py = hand.landmarks[8].y * H;
+      return { x: px, y: py, isGrabbing: isPinching || isPartialLow };
+    });
+    // gripRef is a ref (stable identity) — reads live data without being a dep
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hands, W, H]);
 
-      // Capture all canvases + draw DOM snapshot
-      const el = containerRef.current;
-      if (!el) return;
-
-      const canvas = document.createElement('canvas');
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      // White background
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Copy all visible canvases (skeleton, vectors, timeline)
-      const canvases = el.querySelectorAll('canvas');
-      canvases.forEach((c) => {
-        const rect = c.getBoundingClientRect();
-        try { ctx.drawImage(c, rect.left, rect.top); } catch { /* cross-origin */ }
-      });
-
-      // Copy camera video if visible
-      const video = el.querySelector('video');
-      if (video) {
-        const rect = video.getBoundingClientRect();
-        try { ctx.drawImage(video, rect.left, rect.top, rect.width, rect.height); } catch { /* */ }
-      }
-
-      // Draw colored squares
-      const squares = el.querySelectorAll('[style*="border-radius: 8px"][style*="background-color"]');
-      squares.forEach((sq) => {
-        const style = (sq as HTMLElement).style;
-        const rect = (sq as HTMLElement).getBoundingClientRect();
-        ctx.fillStyle = style.backgroundColor;
-        ctx.beginPath();
-        ctx.roundRect(rect.left, rect.top, rect.width, rect.height, 8);
-        ctx.fill();
-      });
-
-      const link = document.createElement('a');
-      link.download = `clap-screenshot-${Date.now()}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-    };
-  }, [onClapRef, containerRef]);
-
-  // Hand cursors for draggable panels — pinch with hysteresis
-  const panelPinchStateRef = useRef<Record<string, boolean>>({});
-  const panelHandCursors = hands.map((hand) => {
-    const dist = hand.landmarks[4] && hand.landmarks[8]
-      ? Math.hypot(hand.landmarks[4].x - hand.landmarks[8].x, hand.landmarks[4].y - hand.landmarks[8].y)
-      : 1;
-    const key = hand.handedness;
-    const wasPinching = panelPinchStateRef.current[key] ?? false;
-    // Enter at < 0.04, exit at > 0.08 (wide hysteresis)
-    const isPinching = wasPinching ? dist < 0.08 : dist < 0.04;
-    panelPinchStateRef.current[key] = isPinching;
-
-    const pixel = normalizedToPixel({ x: hand.landmarks[8].x, y: hand.landmarks[8].y }, W, H);
-    return { x: pixel.x, y: pixel.y, isGrabbing: isPinching };
-  });
-
-  // Edge border style
-  const borderStyle = (): React.CSSProperties => {
+  // Border style based on edge warning
+  const borderStyle = useMemo((): CSSProperties => {
     if (edgeWarning === 'out') {
       return {
         boxShadow: 'inset 0 0 30px rgba(255, 50, 50, 0.5)',
@@ -434,123 +280,110 @@ export default function App() {
       boxShadow: 'none',
       border: '4px solid transparent',
     };
-  };
+  }, [edgeWarning]);
+
+  const primaryGrip = gripData[0];
 
   return (
-    <>
-      <style>{`
-        @keyframes edgePulse {
-          0%, 100% { border-color: #FF5032; box-shadow: inset 0 0 20px rgba(255, 80, 50, 0.3); }
-          50% { border-color: transparent; box-shadow: none; }
-        }
-      `}</style>
-
-      {/* Flash effect on clap */}
-      {flashActive && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 9999,
-          background: 'white', opacity: 0.8,
-          pointerEvents: 'none',
-        }} />
-      )}
-
-      <div
-        ref={containerRef}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          width: '100vw',
-          height: '100vh',
-          background: '#fff',
-          overflow: 'hidden',
-          ...borderStyle(),
-          transition: edgeWarning === 'near' ? 'none' : 'border-color 300ms ease, box-shadow 300ms ease',
-        }}
-      >
-        {/* Objects + cursor */}
-        {objects.map((obj) => (
-          <DraggableObject
-            key={obj.id}
-            {...obj}
-            isHovered={hoveredId === obj.id}
-            isGrabbed={grabbedId === obj.id || grabbedIdLeft === obj.id}
-          />
-        ))}
-        <HandCursor ref={cursorRef} gestureState={gestureState} />
-        <GripIndicator
-          ref={gripIndicatorRef}
-          gripConfidence={primaryGrip ? primaryGrip.gripForce : 0}
-          visible={telemetryVisible && hands.length > 0}
+    <div
+      ref={containerRef}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        width: '100vw',
+        height: '100vh',
+        background: '#fff',
+        overflow: 'hidden',
+        ...borderStyle,
+        transition: edgeWarning === 'near' ? 'none' : 'border-color 300ms ease, box-shadow 300ms ease',
+      }}
+    >
+      {/* Objects + cursor */}
+      {objects.map((obj) => (
+        <DraggableObject
+          key={obj.id}
+          {...obj}
+          isHovered={hoveredId === obj.id}
+          isGrabbed={grabbedId === obj.id || grabbedIdLeft === obj.id}
         />
+      ))}
+      <HandCursor ref={cursorRef} gestureState={gestureState} />
+      <GripIndicator
+        ref={gripIndicatorRef}
+        gripConfidence={primaryGrip ? primaryGrip.gripForce : 0}
+        visible={telemetryVisible && hands.length > 0}
+      />
 
-        {/* Telemetry overlay — press T */}
-        <TelemetryOverlay
-          visible={telemetryVisible}
-          onToggle={() => setTelemetryVisible((v) => !v)}
-        >
-          <HandSkeleton
-            hands={hands}
-            physicsData={physicsData}
-            workspaceWidth={W}
-            workspaceHeight={H}
-          />
-          <VelocityVectors
-            hands={hands}
-            physicsData={physicsData}
-            workspaceWidth={W}
-            workspaceHeight={H}
-          />
-          <GestureTimeline
-            entries={timelineEntries}
-            workspaceWidth={W}
-          />
-        </TelemetryOverlay>
+      {/* Telemetry overlay — press T */}
+      <TelemetryOverlay
+        visible={telemetryVisible}
+        onToggle={() => setTelemetryVisible((v) => !v)}
+      >
+        <HandSkeleton
+          hands={hands}
+          physicsData={physicsData}
+          workspaceWidth={W}
+          workspaceHeight={H}
+        />
+        <VelocityVectors
+          hands={hands}
+          physicsData={physicsData}
+          workspaceWidth={W}
+          workspaceHeight={H}
+        />
+        <GestureTimeline entries={timelineEntries} workspaceWidth={W} />
+      </TelemetryOverlay>
 
-        {/* Status overlays */}
-        {error && (
-          <div style={{
+      {/* Status overlays */}
+      {error && (
+        <div
+          style={{
             position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
             background: 'rgba(255, 95, 87, 0.9)', color: 'white',
             padding: '8px 16px', borderRadius: 6, fontSize: 13, zIndex: 500,
-          }}>
-            {error} — Using mouse fallback
-          </div>
-        )}
+          }}
+        >
+          {error} — Using mouse fallback
+        </div>
+      )}
 
-        {!isReady && !error && (
-          <div style={{
+      {!isReady && !error && (
+        <div
+          style={{
             position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
             background: 'rgba(0, 0, 0, 0.85)', color: 'white',
             padding: '20px 32px', borderRadius: 12, fontSize: 14, textAlign: 'center', zIndex: 500,
-          }}>
-            <div style={{ marginBottom: 8, fontSize: 18 }}>Loading hand tracking...</div>
-            <div style={{ opacity: 0.7 }}>First load downloads ~6MB model</div>
-            <div style={{ opacity: 0.5, marginTop: 8, fontSize: 12 }}>Mouse fallback active — press T for telemetry</div>
-          </div>
-        )}
-        {/* Panels — same depth as cubes */}
-        <DraggablePanel
-          id="camera"
-          initialX={W - 340}
-          initialY={H - 290}
-          handCursors={panelHandCursors}
-          collisionManager={panelCollisions}
+          }}
         >
-          <CameraPreview videoRef={videoRef} visible={true} />
-        </DraggablePanel>
+          <div style={{ marginBottom: 8, fontSize: 18 }}>Loading hand tracking...</div>
+          <div style={{ opacity: 0.7 }}>First load downloads ~6MB model</div>
+          <div style={{ opacity: 0.5, marginTop: 8, fontSize: 12 }}>
+            Mouse fallback active — press T for telemetry
+          </div>
+        </div>
+      )}
 
-        {telemetryVisible && (
-          <>
-            <DraggablePanel id="eventlog" initialX={W - 360} initialY={20} handCursors={panelHandCursors} collisionManager={panelCollisions}>
-              <EventLog entries={log} onClear={clearLog} onExport={handleExport} />
-            </DraggablePanel>
+      {/* Panels */}
+      <DraggablePanel initialX={W - 340} initialY={H - 290} handCursors={panelHandCursors}>
+        <CameraPreview videoRef={videoRef} visible={true} />
+      </DraggablePanel>
 
-            <DraggablePanel id="hud" initialX={20} initialY={20} handCursors={panelHandCursors} collisionManager={panelCollisions}>
-              <DualHandHUD physicsData={physicsData} gripData={gripData} motionData={motionData} fps={fps} />
-            </DraggablePanel>
-          </>
-        )}
-      </div>
-    </>
+      {telemetryVisible && (
+        <>
+          <DraggablePanel initialX={W - 340} initialY={20} handCursors={panelHandCursors}>
+            <MemoEventLog entries={log} onClear={clearLog} onExport={handleExport} />
+          </DraggablePanel>
+
+          <DraggablePanel initialX={20} initialY={20} handCursors={panelHandCursors}>
+            <MemoDualHandHUD
+              physicsData={physicsData}
+              gripData={gripData}
+              motionData={motionData}
+              fps={fps}
+            />
+          </DraggablePanel>
+        </>
+      )}
+    </div>
   );
 }

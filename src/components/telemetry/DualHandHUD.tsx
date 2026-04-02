@@ -1,4 +1,5 @@
 import { magnitude3 } from '../../utils/geometry';
+import { gripColor } from '../../utils/colors';
 import type { HandPhysics, GripState, MotionPattern } from '../../types/telemetry';
 
 interface DualHandHUDProps {
@@ -6,12 +7,6 @@ interface DualHandHUDProps {
   gripData: GripState[];
   motionData: MotionPattern[];
   fps: number;
-}
-
-function gripColor(force: number): string {
-  if (force < 0.3) return '#27C93F';
-  if (force < 0.7) return '#FFBD2E';
-  return '#FF5F56';
 }
 
 function velocityColor(speed: number): string {
@@ -108,8 +103,10 @@ export function DualHandHUD({ physicsData, gripData, motionData, fps }: DualHand
   const rightPhysics = physicsData.find((p) => p.handedness === 'Right');
   const leftGrip = gripData.find((g) => g.handedness === 'Left');
   const rightGrip = gripData.find((g) => g.handedness === 'Right');
-  const leftMotion = motionData[physicsData.findIndex((p) => p.handedness === 'Left')];
-  const rightMotion = motionData[physicsData.findIndex((p) => p.handedness === 'Right')];
+  const leftMotionIdx = physicsData.findIndex((p) => p.handedness === 'Left');
+  const rightMotionIdx = physicsData.findIndex((p) => p.handedness === 'Right');
+  const leftMotion = leftMotionIdx >= 0 ? motionData[leftMotionIdx] : undefined;
+  const rightMotion = rightMotionIdx >= 0 ? motionData[rightMotionIdx] : undefined;
 
   return (
     <div style={containerStyle}>

@@ -85,6 +85,8 @@ export interface TelemetryLoggerResult {
 
 export function useTelemetryLogger(): TelemetryLoggerResult {
   const [log, setLog] = useState<TelemetryLogEntry[]>([]);
+  const logRef = useRef(log);
+  logRef.current = log;
   const idCounterRef = useRef(0);
   const handStatesRef = useRef<Record<string, HandState>>({
     Left: createHandState(),
@@ -328,8 +330,8 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
   }, []);
 
   const exportLog = useCallback(() => {
-    return JSON.stringify(log, null, 2);
-  }, [log]);
+    return JSON.stringify(logRef.current, null, 2);
+  }, []);
 
   return { log, processFrame, addEntry, clearLog, exportLog, onClapRef };
 }

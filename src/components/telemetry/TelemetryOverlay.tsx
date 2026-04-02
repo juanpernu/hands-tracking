@@ -9,6 +9,7 @@ interface TelemetryOverlayProps {
 export function TelemetryOverlay({ visible, onToggle, children }: TelemetryOverlayProps) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
       if (e.key === 'T' || e.key === 't') {
         onToggle();
       }

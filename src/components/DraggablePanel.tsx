@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
-import type { PanelCollisionManager } from '../hooks/usePanelCollisions';
+import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 
 interface HandCursorInput {
   x: number;
@@ -8,70 +8,79 @@ interface HandCursorInput {
 }
 
 interface DraggablePanelProps {
-  children: React.ReactNode;
-  id: string;
+  children: ReactNode;
   initialX: number;
   initialY: number;
   handCursors?: HandCursorInput[];
-  collisionManager?: PanelCollisionManager;
+}
+
+function clampPosition(
+  x: number,
+  y: number,
+  panelWidth: number,
+  panelHeight: number,
+): { x: number; y: number } {
+  const maxX = window.innerWidth - panelWidth;
+  const maxY = window.innerHeight - panelHeight;
+  return {
+    x: Math.max(0, Math.min(x, maxX)),
+    y: Math.max(0, Math.min(y, maxY)),
+  };
 }
 
 export function DraggablePanel({
   children,
-  id,
   initialX,
   initialY,
   handCursors = [],
-  collisionManager,
 }: DraggablePanelProps) {
-  const [position, setPosition] = useState({ x: initialX, y: initialY });
+  const [position, setPosition] = useState(() =>
+    clampPosition(initialX, initialY, 320, 240),
+  );
   const [isDragging, setIsDragging] = useState(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
   const activeHandIndexRef = useRef<number | null>(null);
   const wasGrabbingRef = useRef<boolean[]>([]);
-  const dragStartTimeRef = useRef(0);
-  const MAX_DRAG_MS = 5000; // auto-release after 5 seconds
 
-  // Register with collision manager
-  useEffect(() => {
+  // Keep the latest handCursors in a ref so the effect doesn't re-fire every frame.
+  // The effect only needs to run when position changes (for hit-test) or on mount.
+  const handCursorsRef = useRef<HandCursorInput[]>(handCursors);
+  handCursorsRef.current = handCursors;
+
+  // Stable ref for position so the hand-cursor effect can read without being
+  // a dep (which would cause the effect to re-run every render).
+  const positionRef = useRef(position);
+  positionRef.current = position;
+
+  // Helper to set position with clamping
+  const setClampedPosition = useCallback((x: number, y: number) => {
     const el = panelRef.current;
-    if (!el || !collisionManager) return;
-    collisionManager.register(id, el);
-    return () => collisionManager.unregister(id);
-  }, [id, collisionManager]);
-
-  // Move with collision resolution
-  const moveTo = useCallback((x: number, y: number) => {
-    if (collisionManager) {
-      const resolved = collisionManager.updatePosition(id, x, y);
-      setPosition(resolved);
-    } else {
-      const w = panelRef.current?.offsetWidth ?? 320;
-      const h = panelRef.current?.offsetHeight ?? 240;
-      setPosition({
-        x: Math.max(0, Math.min(x, window.innerWidth - w)),
-        y: Math.max(0, Math.min(y, window.innerHeight - h)),
-      });
-    }
-  }, [id, collisionManager]);
+    const w = el?.offsetWidth ?? 320;
+    const h = el?.offsetHeight ?? 240;
+    setPosition(clampPosition(x, y, w, h));
+  }, []);
 
   // Mouse drag
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  const handleMouseDown = useCallback((e: ReactMouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
+    const pos = positionRef.current;
     dragOffsetRef.current = {
-      x: e.clientX - position.x,
-      y: e.clientY - position.y,
+      x: e.clientX - pos.x,
+      y: e.clientY - pos.y,
     };
-  }, [position]);
+  }, []);
 
   useEffect(() => {
     if (!isDragging || activeHandIndexRef.current !== null) return;
 
     const handleMouseMove = (e: MouseEvent) => {
-      moveTo(e.clientX - dragOffsetRef.current.x, e.clientY - dragOffsetRef.current.y);
+      setClampedPosition(
+        e.clientX - dragOffsetRef.current.x,
+        e.clientY - dragOffsetRef.current.y,
+      );
     };
     const handleMouseUp = () => setIsDragging(false);
 
@@ -81,57 +90,76 @@ export function DraggablePanel({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, moveTo]);
+  }, [isDragging, setClampedPosition]);
 
-  // Hand cursor drag
+  // Hand cursor drag — runs on RAF via a stable interval, reading from refs.
+  // Decoupled from handCursors prop changes to avoid firing every frame.
   useEffect(() => {
-    const el = panelRef.current;
-    if (!el) return;
+    let rafId: number;
 
-    const pw = el.offsetWidth;
-    const ph = el.offsetHeight;
+    function tick() {
+      const cursors = handCursorsRef.current;
+      const el = panelRef.current;
+      if (!el) {
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
 
-    for (let i = 0; i < handCursors.length; i++) {
-      const cursor = handCursors[i];
-      const wasGrabbing = wasGrabbingRef.current[i] ?? false;
+      const pw = el.offsetWidth;
+      const ph = el.offsetHeight;
+      const pos = positionRef.current;
 
-      if (cursor.isGrabbing && !wasGrabbing) {
-        if (
-          activeHandIndexRef.current === null &&
-          cursor.x >= position.x - 10 && cursor.x <= position.x + pw + 10 &&
-          cursor.y >= position.y - 10 && cursor.y <= position.y + ph + 10
-        ) {
-          activeHandIndexRef.current = i;
-          setIsDragging(true);
-          dragStartTimeRef.current = performance.now();
-          dragOffsetRef.current = {
-            x: cursor.x - position.x,
-            y: cursor.y - position.y,
-          };
+      for (let i = 0; i < cursors.length; i++) {
+        const cursor = cursors[i];
+        const wasGrabbing = wasGrabbingRef.current[i] ?? false;
+
+        if (cursor.isGrabbing && !wasGrabbing) {
+          if (
+            activeHandIndexRef.current === null &&
+            cursor.x >= pos.x - 10 && cursor.x <= pos.x + pw + 10 &&
+            cursor.y >= pos.y - 10 && cursor.y <= pos.y + ph + 10
+          ) {
+            activeHandIndexRef.current = i;
+            setIsDragging(true);
+            dragOffsetRef.current = {
+              x: cursor.x - pos.x,
+              y: cursor.y - pos.y,
+            };
+          }
+        }
+
+        if (!cursor.isGrabbing && wasGrabbing && activeHandIndexRef.current === i) {
+          activeHandIndexRef.current = null;
+          setIsDragging(false);
         }
       }
 
-      if (!cursor.isGrabbing && wasGrabbing && activeHandIndexRef.current === i) {
-        activeHandIndexRef.current = null;
-        setIsDragging(false);
-      }
-    }
-
-    if (activeHandIndexRef.current !== null) {
-      // Auto-release safety: prevent stuck drag
-      if (performance.now() - dragStartTimeRef.current > MAX_DRAG_MS) {
-        activeHandIndexRef.current = null;
-        setIsDragging(false);
-      } else {
-        const activeCursor = handCursors[activeHandIndexRef.current];
-        if (activeCursor?.isGrabbing) {
-          moveTo(activeCursor.x - dragOffsetRef.current.x, activeCursor.y - dragOffsetRef.current.y);
+      if (activeHandIndexRef.current !== null) {
+        if (activeHandIndexRef.current >= cursors.length) {
+          activeHandIndexRef.current = null;
+          setIsDragging(false);
+        } else {
+          const activeCursor = cursors[activeHandIndexRef.current];
+          if (activeCursor?.isGrabbing) {
+            setClampedPosition(
+              activeCursor.x - dragOffsetRef.current.x,
+              activeCursor.y - dragOffsetRef.current.y,
+            );
+          } else {
+            activeHandIndexRef.current = null;
+            setIsDragging(false);
+          }
         }
       }
+
+      wasGrabbingRef.current = cursors.map((c) => c.isGrabbing);
+      rafId = requestAnimationFrame(tick);
     }
 
-    wasGrabbingRef.current = handCursors.map((c) => c.isGrabbing);
-  }, [handCursors, position, moveTo]);
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+    // Only setClampedPosition is a dep — it's stable (useCallback with [])
+  }, [setClampedPosition]);
 
   return (
     <div

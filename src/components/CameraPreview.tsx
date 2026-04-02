@@ -44,6 +44,30 @@ export default function CameraPreview({ videoRef, visible }: CameraPreviewProps)
           <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#27C93F' }} />
         </div>
 
+        {/* Persistent camera-active indicator */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: '#FF3232',
+              boxShadow: '0 0 4px rgba(255, 50, 50, 0.6)',
+            }}
+          />
+          <span
+            style={{
+              fontSize: 9,
+              fontWeight: 700,
+              color: '#fff',
+              letterSpacing: '0.05em',
+              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}
+          >
+            LIVE
+          </span>
+        </div>
+
         <span
           style={{
             fontSize: 11,
