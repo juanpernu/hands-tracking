@@ -103,17 +103,15 @@ export default function App() {
   const { positionRef: mousePosRef, isGrabbing: mouseGrabbing, containerRef } = useMouseFallback();
   const { objects, addObject, removeObject, moveObject, hitTest } = useObjectManagement(0);
 
-  // --- Analysis + interaction hooks ---
+  // --- Analysis hooks ---
   const { physicsData, gripData, motionData, gripRef, computeFrame } = useHandAnalysis();
-  const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake } =
-    useInteractionController({ onGestureEvent: interpreter.handle });
 
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
   const { log, processFrame, clearLog, exportLog, onClapRef } = useTelemetryLogger();
   const { record: recordBatch } = useBatchTelemetry();
 
-  // --- Agent + Plugin hooks ---
+  // --- Agent + Plugin hooks (must be declared before interpreter) ---
   const registry = usePluginRegistry([
     fullscreenPlugin, navigationPlugin, tabsPlugin,
     clipboardPlugin, speechPlugin, notificationsPlugin,
@@ -135,6 +133,10 @@ export default function App() {
     bridge,
     onAction: handleAction,
   });
+
+  // --- Interaction controller (depends on interpreter.handle) ---
+  const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake, updateMotion } =
+    useInteractionController({ onGestureEvent: interpreter.handle });
 
   // --- UI state ---
   const [telemetryVisible, setTelemetryVisible] = useState(true);
@@ -197,8 +199,9 @@ export default function App() {
     recordBatch(currentHands, physics, grips, motions, now);
     processFrame(currentHands, physics, grips, motions, now);
 
-    // 3. Shake-to-clear
+    // 3. Shake-to-clear + swipe detection
     updateShake(currentHands, physics, currentObjects, removeObject, now);
+    updateMotion(motions, currentHands);
 
     // 4. Detect gesture
     const gesture = detectGesture(currentHands);
@@ -253,6 +256,7 @@ export default function App() {
     recordBatch,
     processFrame,
     updateShake,
+    updateMotion,
     detectGesture,
     update,
     hitTest,
@@ -332,6 +336,9 @@ export default function App() {
   }, [edgeWarning]);
 
   // Clap → screenshot via canvas capture
+  // INVARIANT: Clap is detected exclusively by useTelemetryLogger (external audio/heuristic),
+  // NOT by useInteractionController. The controller must NEVER emit 'clap' to avoid double-dispatch,
+  // since this handler already calls interpreter.handle for clap events.
   useEffect(() => {
     onClapRef.current = () => {
       interpreter.handle({ type: 'clap', hands: handsRef.current, timestamp: performance.now() });
@@ -380,7 +387,7 @@ export default function App() {
       link.href = canvas.toDataURL('image/png');
       link.click();
     };
-  }, [onClapRef, containerRef, interpreter]);
+  }, [onClapRef, containerRef, interpreter.handle]);
 
   const primaryGrip = gripData[0];
 

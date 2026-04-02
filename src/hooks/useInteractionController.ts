@@ -14,6 +14,7 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import type { GestureResult } from './useGestureDetection';
 import type { HandData, GestureState, DraggableObjectData } from '../types';
 import type { GripState } from '../types/telemetry';
+import type { MotionPattern } from '../types/telemetry';
 import type { AgentGestureEvent, AgentGestureType } from '../agent/types';
 import { normalizedToPixel, magnitude3 } from '../utils/geometry';
 
@@ -21,6 +22,7 @@ const EDGE_THRESHOLD = 0.08;
 const SHAKE_CLEAR_VELOCITY = 0.3;
 const SHAKE_CLEAR_REVERSALS = 4;
 const SHAKE_CLEAR_DEBOUNCE_MS = 2000;
+const SWIPE_DEBOUNCE_MS = 1000;
 
 export interface InteractionOutput {
   gestureState: GestureState;
@@ -86,11 +88,15 @@ export function useInteractionController(config?: InteractionControllerConfig) {
   const shakeClearingRef = useRef(false);
   const shakeTimeoutIdsRef = useRef<number[]>([]);
 
+  // --- Swipe detection (rising-edge + debounce) ---
+  const prevSwipeActiveRef = useRef(false);
+  const lastSwipeEmitTimeRef = useRef(0);
+
   // --- Gesture event callback ---
   const onGestureEventRef = useRef(config?.onGestureEvent);
   onGestureEventRef.current = config?.onGestureEvent;
 
-  const emitGesture = useCallback((type: AgentGestureType, hands: HandData[], input?: UpdateInput) => {
+  const emitGesture = useCallback((type: AgentGestureType, hands: HandData[]) => {
     const cb = onGestureEventRef.current;
     if (!cb) return;
     cb({ type, hands, timestamp: performance.now() });
@@ -261,8 +267,13 @@ export function useInteractionController(config?: InteractionControllerConfig) {
       }
 
       if (rightHovered || leftHovered) {
+        // Dual-grab: both hands pinch over existing objects — move them.
+        // Intentionally does NOT emit 'both-pinch' here. The 'both-pinch' event
+        // maps to 'dom.tabs:open-tab' (object creation), which must only fire
+        // when no existing objects are under either cursor.
         newGestureState = 'grabbing';
       } else {
+        // No objects under either cursor — create a new object and emit event
         addObject(cursorPixel);
         emitGesture('both-pinch', hands);
         newGestureState = 'creating';
@@ -423,6 +434,36 @@ export function useInteractionController(config?: InteractionControllerConfig) {
     }
   }, [emitGesture]);
 
+  /**
+   * Swipe detection — receives motion patterns from useHandAnalysis.
+   * Uses rising-edge detection + debounce to emit exactly once per swipe gesture.
+   * Call once per frame after updateShake().
+   */
+  const updateMotion = useCallback((
+    motionData: MotionPattern[],
+    hands: HandData[],
+  ) => {
+    const now = performance.now();
+    const swipePattern = motionData.find(
+      (m) => m.type === 'swipe' && m.confidence > 0.5 && m.swipeDirection,
+    );
+
+    const isSwipeActive = !!swipePattern;
+
+    // Rising-edge: only emit when transitioning from no-swipe to swipe
+    if (isSwipeActive && !prevSwipeActiveRef.current) {
+      // Debounce: prevent rapid re-triggering
+      if (now - lastSwipeEmitTimeRef.current > SWIPE_DEBOUNCE_MS) {
+        const direction = swipePattern!.swipeDirection!;
+        const gestureType: AgentGestureType = `swipe-${direction}`;
+        emitGesture(gestureType, hands);
+        lastSwipeEmitTimeRef.current = now;
+      }
+    }
+
+    prevSwipeActiveRef.current = isSwipeActive;
+  }, [emitGesture]);
+
   // Cleanup shake timeouts on unmount
   useEffect(() => {
     return () => {
@@ -440,5 +481,6 @@ export function useInteractionController(config?: InteractionControllerConfig) {
     // Imperative updates called from RAF
     update,
     updateShake,
+    updateMotion,
   };
 }
