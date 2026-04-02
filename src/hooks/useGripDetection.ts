@@ -4,18 +4,7 @@ import type { GripState, GripType } from '../types/telemetry';
 import type { HandData } from '../types/index';
 import { clamp } from '../utils/geometry';
 import { computeFingerCurl, classifyGrip } from '../utils/grip';
-
-// MediaPipe landmark index chains per finger: [CMC/base, MCP, PIP, TIP]
-const FINGER_CHAINS = [
-  [1, 2, 3, 4],   // Thumb
-  [5, 6, 7, 8],   // Index
-  [9, 10, 11, 12], // Middle
-  [13, 14, 15, 16], // Ring
-  [17, 18, 19, 20], // Pinky
-] as const;
-
-// Number of consecutive frames required before the grip type switches (hysteresis).
-const HYSTERESIS_FRAMES = 3;
+import { GRIP, FINGER_CHAINS } from '../config';
 
 // Per-hand mutable state that lives outside React renders.
 interface HandState {
@@ -74,18 +63,21 @@ export function useGripDetection(): (hands: HandData[], timestamp: number) => Gr
 
       // --- 2. Openness ratio (exclude thumb) ---
       const opennessRatio = clamp(
-        1 - (fingerCurl[1] + fingerCurl[2] + fingerCurl[3] + fingerCurl[4]) / 4,
+        1 - (fingerCurl[1] + fingerCurl[2] + fingerCurl[3] + fingerCurl[4]) / GRIP.NON_THUMB_FINGER_COUNT,
         0,
         1,
       );
 
       // --- 3. Grip force: rate of closure, clamped to [0, 1] ---
-      let gripForce = 0;
       const deltaSeconds = (timestamp - hs.prevTimestamp) / 1000;
+      let gripForce = 0;
 
       if (hs.prevTimestamp > 0 && deltaSeconds > 0) {
         const closure = -(opennessRatio - hs.prevOpennessRatio) / deltaSeconds;
         gripForce = clamp(closure, 0, 1);
+      } else if (hs.prevTimestamp > 0) {
+        // deltaSeconds is 0 (duplicate timestamp) — keep previous grip force
+        gripForce = 0;
       }
 
       // Persist for next frame.
@@ -102,7 +94,7 @@ export function useGripDetection(): (hands: HandData[], timestamp: number) => Gr
         hs.candidateCount = 1;
       }
 
-      if (hs.candidateCount >= HYSTERESIS_FRAMES) {
+      if (hs.candidateCount >= GRIP.HYSTERESIS_FRAMES) {
         hs.confirmedType = hs.candidateType;
       }
 

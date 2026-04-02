@@ -83,8 +83,8 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
     endTime: 0,
   });
 
-  // Initialized lazily on first record() call to avoid calling Date.now() during render.
-  const lastFlushRef = useRef(-1);
+  // Initialized to current time so the first interval-based flush waits the full interval.
+  const lastFlushRef = useRef(Date.now());
   const mountedRef = useRef(true);
 
   const statsRef = useRef({
@@ -172,11 +172,6 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
     ) => {
       if (!enabled) return;
 
-      // Lazy-init lastFlushRef on first record call (avoids Date.now() during render).
-      if (lastFlushRef.current === -1) {
-        lastFlushRef.current = Date.now();
-      }
-
       const buf = bufferRef.current;
       const stats = statsRef.current;
 
@@ -227,9 +222,6 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
     const id = setInterval(() => {
       if (!mountedRef.current) return;
       setPendingFrames(bufferRef.current.frames.length);
-
-      // Skip interval-based flush until the first record() initializes lastFlushRef.
-      if (lastFlushRef.current === -1) return;
 
       const elapsed = Date.now() - lastFlushRef.current;
       if (elapsed >= maxIntervalMs && bufferRef.current.frames.length > 0) {

@@ -1,5 +1,6 @@
 import React from 'react';
 import type { GestureState } from '../types';
+import { UI } from '../config';
 
 interface HandCursorProps {
   gestureState: GestureState;
@@ -80,7 +81,7 @@ const HandCursor = React.forwardRef<HTMLDivElement, HandCursorProps>(
           marginLeft: -width / 2,
           marginTop: -height / 2,
           // Animate visual properties only — transform must be instant
-          transition: 'width 150ms ease-out, height 150ms ease-out, background-color 150ms ease-out, margin 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out',
+          transition: `width ${UI.TRANSITION_DURATION_MS}ms ease-out, height ${UI.TRANSITION_DURATION_MS}ms ease-out, background-color ${UI.TRANSITION_DURATION_MS}ms ease-out, margin ${UI.TRANSITION_DURATION_MS}ms ease-out, border-color ${UI.TRANSITION_DURATION_MS}ms ease-out, box-shadow ${UI.TRANSITION_DURATION_MS}ms ease-out`,
         }}
       />
     );

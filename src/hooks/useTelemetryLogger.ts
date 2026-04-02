@@ -2,6 +2,7 @@ import { useRef, useState, useCallback } from 'react';
 import type { HandData } from '../types';
 import type { HandPhysics, GripState, MotionPattern } from '../types/telemetry';
 import { magnitude3 } from '../utils/geometry';
+import { TELEMETRY_LOGGER } from '../config';
 
 // --- Event types that we can detect and log ---
 
@@ -44,14 +45,6 @@ interface HandState {
   lastLogTime: number;         // debounce per event type
 }
 
-const VELOCITY_SPIKE_THRESHOLD = 0.4;   // normalized units/sec
-const SHAKE_REVERSAL_THRESHOLD = 4;     // direction changes in 15 frames = shake
-const ACCELERATION_THRESHOLD = 0.3;
-const SUDDEN_STOP_THRESHOLD = 0.05;
-const SNAPSHOT_INTERVAL_MS = 1000;       // periodic snapshot every 1s
-const EVENT_DEBOUNCE_MS = 300;
-const HISTORY_SIZE = 15;
-const MAX_LOG_ENTRIES = 500;
 
 function createHandState(): HandState {
   return {
@@ -64,9 +57,6 @@ function createHandState(): HandState {
   };
 }
 
-// Clap detection thresholds (from telemetry analysis)
-const CLAP_MIN_VELOCITY = 0.4;             // both hands must be moving fast
-const CLAP_DEBOUNCE_MS = 1500;             // prevent double-detection
 
 export interface TelemetryLoggerResult {
   log: TelemetryLogEntry[];
@@ -106,7 +96,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
     const id = ++idCounterRef.current;
     setLog((prev) => {
       const next = [...prev, { ...entry, id }];
-      return next.length > MAX_LOG_ENTRIES ? next.slice(-MAX_LOG_ENTRIES) : next;
+      return next.length > TELEMETRY_LOGGER.MAX_LOG_ENTRIES ? next.slice(-TELEMETRY_LOGGER.MAX_LOG_ENTRIES) : next;
     });
   }, []);
 
@@ -122,7 +112,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
     // Phase 2: impact = (a) both slow + palms close, OR (b) hand lost (palms occlude)
     const phase = clapPhaseRef.current;
 
-    if (timestamp - lastClapTimeRef.current > CLAP_DEBOUNCE_MS) {
+    if (timestamp - lastClapTimeRef.current > TELEMETRY_LOGGER.CLAP_DEBOUNCE_MS) {
       if (hands.length >= 2 && physics.length >= 2) {
         const leftP = physics.find((p) => p.handedness === 'Left');
         const rightP = physics.find((p) => p.handedness === 'Right');
@@ -133,7 +123,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
           const converging =
             (leftP.palmVelocity.x > 0 && rightP.palmVelocity.x < 0) ||
             (leftP.palmVelocity.x < 0 && rightP.palmVelocity.x > 0);
-          const bothFast = leftSpeed > CLAP_MIN_VELOCITY && rightSpeed > CLAP_MIN_VELOCITY;
+          const bothFast = leftSpeed > TELEMETRY_LOGGER.CLAP_MIN_VELOCITY && rightSpeed > TELEMETRY_LOGGER.CLAP_MIN_VELOCITY;
 
           if (!phase.converging) {
             if (bothFast && converging) {
@@ -146,14 +136,14 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
             const timeSinceConverge = timestamp - phase.convergeTime;
 
             // Check impact: both slowed AND palms close
-            const bothSlowed = leftSpeed < 0.15 && rightSpeed < 0.15;
+            const bothSlowed = leftSpeed < TELEMETRY_LOGGER.CLAP_SLOW_THRESHOLD && rightSpeed < TELEMETRY_LOGGER.CLAP_SLOW_THRESHOLD;
             const leftHand = hands.find((h) => h.handedness === 'Left');
             const rightHand = hands.find((h) => h.handedness === 'Right');
             const palmsClose = leftHand && rightHand
-              ? Math.abs(leftHand.landmarks[9].x - rightHand.landmarks[9].x) < 0.15
+              ? Math.abs(leftHand.landmarks[9].x - rightHand.landmarks[9].x) < TELEMETRY_LOGGER.CLAP_CLOSE_THRESHOLD
               : false;
 
-            if (bothSlowed && palmsClose && timeSinceConverge < 500) {
+            if (bothSlowed && palmsClose && timeSinceConverge < TELEMETRY_LOGGER.CLAP_TIMEOUT_MS) {
               lastClapTimeRef.current = timestamp;
               phase.converging = false;
               addEntry({
@@ -170,7 +160,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
       } else if (phase.converging && hands.length < 2) {
         // Phase 2b: hand lost after convergence = palms collided and occluded one hand
         const timeSinceConverge = timestamp - phase.convergeTime;
-        if (timeSinceConverge < 400) {
+        if (timeSinceConverge < TELEMETRY_LOGGER.CLAP_OCCLUSION_MS) {
           lastClapTimeRef.current = timestamp;
           phase.converging = false;
           addEntry({
@@ -186,7 +176,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
     }
 
     // Periodic snapshot
-    if (timestamp - lastSnapshotRef.current >= SNAPSHOT_INTERVAL_MS) {
+    if (timestamp - lastSnapshotRef.current >= TELEMETRY_LOGGER.SNAPSHOT_INTERVAL_MS) {
       lastSnapshotRef.current = timestamp;
       for (let i = 0; i < physics.length; i++) {
         const p = physics[i];
@@ -227,14 +217,14 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
 
       // Update history
       state.velocityHistory.push(speed);
-      if (state.velocityHistory.length > HISTORY_SIZE) state.velocityHistory.shift();
+      if (state.velocityHistory.length > TELEMETRY_LOGGER.HISTORY_SIZE) state.velocityHistory.shift();
       state.directionHistory.push(direction);
-      if (state.directionHistory.length > HISTORY_SIZE) state.directionHistory.shift();
+      if (state.directionHistory.length > TELEMETRY_LOGGER.HISTORY_SIZE) state.directionHistory.shift();
 
-      const canLog = timestamp - state.lastLogTime > EVENT_DEBOUNCE_MS;
+      const canLog = timestamp - state.lastLogTime > TELEMETRY_LOGGER.EVENT_DEBOUNCE_MS;
 
       // --- Velocity spike ---
-      if (canLog && speed > VELOCITY_SPIKE_THRESHOLD) {
+      if (canLog && speed > TELEMETRY_LOGGER.VELOCITY_SPIKE_THRESHOLD) {
         state.lastLogTime = timestamp;
         addEntry({
           timestamp,
@@ -251,11 +241,11 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
         for (let j = 2; j < state.directionHistory.length; j++) {
           const prev = state.directionHistory[j - 1] - state.directionHistory[j - 2];
           const curr = state.directionHistory[j] - state.directionHistory[j - 1];
-          if (prev * curr < 0 && Math.abs(curr) > 0.3) reversals++;
+          if (prev * curr < 0 && Math.abs(curr) > TELEMETRY_LOGGER.SHAKE_ANGLE_THRESHOLD) reversals++;
         }
         state.shakeCount = reversals;
 
-        if (canLog && reversals >= SHAKE_REVERSAL_THRESHOLD && speed > 0.15) {
+        if (canLog && reversals >= TELEMETRY_LOGGER.SHAKE_REVERSAL_THRESHOLD && speed > TELEMETRY_LOGGER.SHAKE_SPEED_THRESHOLD) {
           state.lastLogTime = timestamp;
           addEntry({
             timestamp,
@@ -268,7 +258,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
       }
 
       // --- Acceleration burst (from rest) ---
-      if (canLog && accel > ACCELERATION_THRESHOLD && !state.wasMoving) {
+      if (canLog && accel > TELEMETRY_LOGGER.ACCELERATION_THRESHOLD && !state.wasMoving) {
         state.lastLogTime = timestamp;
         addEntry({
           timestamp,
@@ -280,7 +270,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
       }
 
       // --- Sudden stop ---
-      if (canLog && state.wasMoving && speed < SUDDEN_STOP_THRESHOLD) {
+      if (canLog && state.wasMoving && speed < TELEMETRY_LOGGER.SUDDEN_STOP_THRESHOLD) {
         state.lastLogTime = timestamp;
         addEntry({
           timestamp,
@@ -315,7 +305,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
       }
 
       // Update state
-      state.wasMoving = speed > 0.1;
+      state.wasMoving = speed > TELEMETRY_LOGGER.MOVING_SPEED_THRESHOLD;
       if (g) state.lastGripType = g.gripType;
     }
   }, [addEntry]);

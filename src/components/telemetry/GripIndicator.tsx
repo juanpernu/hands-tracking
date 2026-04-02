@@ -1,13 +1,15 @@
 import React from 'react';
 import { gripColor } from '../../utils/colors';
+import { TELEMETRY_VIS } from '../../config';
 
 interface GripIndicatorProps {
   gripConfidence: number; // 0-1
   visible: boolean;
 }
 
-const RADIUS = 22;
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS; // ~138.2
+const CIRCUMFERENCE = 2 * Math.PI * TELEMETRY_VIS.GRIP_INDICATOR_RADIUS;
+const GRIP_CENTER = TELEMETRY_VIS.GRIP_INDICATOR_RADIUS + 2;
+const GRIP_SVG_SIZE = GRIP_CENTER * 2;
 
 const GripIndicator = React.forwardRef<HTMLDivElement, GripIndicatorProps>(
   ({ gripConfidence, visible }, ref) => {
@@ -23,24 +25,24 @@ const GripIndicator = React.forwardRef<HTMLDivElement, GripIndicatorProps>(
           position: 'absolute',
           pointerEvents: 'none',
           zIndex: 999,
-          // Center the 48x48 SVG over the tracked point
-          marginLeft: -24,
-          marginTop: -24,
+          // Center the SVG over the tracked point
+          marginLeft: -GRIP_CENTER,
+          marginTop: -GRIP_CENTER,
         }}
       >
         <svg
-          width={48}
-          height={48}
-          viewBox="0 0 48 48"
+          width={GRIP_SVG_SIZE}
+          height={GRIP_SVG_SIZE}
+          viewBox={`0 0 ${GRIP_SVG_SIZE} ${GRIP_SVG_SIZE}`}
           style={{ display: 'block', transform: 'rotate(-90deg)' }}
         >
           <circle
-            cx={24}
-            cy={24}
-            r={RADIUS}
+            cx={GRIP_CENTER}
+            cy={GRIP_CENTER}
+            r={TELEMETRY_VIS.GRIP_INDICATOR_RADIUS}
             fill="none"
             stroke={color}
-            strokeWidth={3}
+            strokeWidth={TELEMETRY_VIS.GRIP_INDICATOR_STROKE}
             strokeDasharray={CIRCUMFERENCE}
             strokeDashoffset={dashOffset}
             strokeLinecap="round"

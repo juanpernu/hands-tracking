@@ -1,18 +1,7 @@
 import { useRef, useCallback } from 'react';
 import type { HandData } from '../types';
 import { distance, lerp } from '../utils/geometry';
-
-// MediaPipe hand landmark indices
-const INDEX_FINGER_TIP = 8;
-const THUMB_TIP = 4;
-
-// Hysteresis thresholds for pinch detection
-const PINCH_ENTER_THRESHOLD = 0.05;
-const PINCH_EXIT_THRESHOLD = 0.07;
-const SPREAD_THRESHOLD = 0.3;
-
-// Cursor smoothing factor (lower = smoother but laggier)
-const LERP_FACTOR = 0.3;
+import { LANDMARK, GESTURE } from '../config';
 
 export interface GestureResult {
   primaryCursor: { x: number; y: number } | null;
@@ -48,27 +37,35 @@ export function useGestureDetection() {
       };
     }
 
+    // Clear pinch state for hands that are no longer present to prevent
+    // stale true values when a hand disappears mid-pinch and reappears.
+    if (hands.length === 1) {
+      const presentHand = hands[0].handedness;
+      const otherHand = presentHand === 'Left' ? 'Right' : 'Left';
+      delete pinchStateRef.current[otherHand];
+    }
+
     // Prefer the right hand as primary; fall back to the first detected hand
     const primaryHand =
       hands.find((h) => h.handedness === 'Right') ?? hands[0];
 
     // --- Cursor position (normalized, before pixel conversion) ---
-    const indexTip = primaryHand.landmarks[INDEX_FINGER_TIP];
+    const indexTip = primaryHand.landmarks[LANDMARK.INDEX_TIP];
     const rawCursor = { x: indexTip.x, y: indexTip.y };
 
     if (smoothCursorRef.current === null) {
       smoothCursorRef.current = { ...rawCursor };
     } else {
       smoothCursorRef.current = {
-        x: lerp(smoothCursorRef.current.x, rawCursor.x, LERP_FACTOR),
-        y: lerp(smoothCursorRef.current.y, rawCursor.y, LERP_FACTOR),
+        x: lerp(smoothCursorRef.current.x, rawCursor.x, GESTURE.LERP_FACTOR),
+        y: lerp(smoothCursorRef.current.y, rawCursor.y, GESTURE.LERP_FACTOR),
       };
     }
 
     // --- Per-hand pinch / spread detection ---
     const pinchResults = hands.map((hand) => {
-      const thumb = hand.landmarks[THUMB_TIP];
-      const index = hand.landmarks[INDEX_FINGER_TIP];
+      const thumb = hand.landmarks[LANDMARK.THUMB_TIP];
+      const index = hand.landmarks[LANDMARK.INDEX_TIP];
       const dist = distance(thumb, index);
       const key = hand.handedness;
 
@@ -77,15 +74,15 @@ export function useGestureDetection() {
       let isPinching: boolean;
       if (wasPinching) {
         // Already pinching — only exit when clearly above the exit threshold
-        isPinching = dist < PINCH_EXIT_THRESHOLD;
+        isPinching = dist < GESTURE.PINCH_EXIT_THRESHOLD;
       } else {
         // Not pinching — only enter when clearly below the enter threshold
-        isPinching = dist < PINCH_ENTER_THRESHOLD;
+        isPinching = dist < GESTURE.PINCH_ENTER_THRESHOLD;
       }
 
       pinchStateRef.current[key] = isPinching;
 
-      const isSpreading = dist > SPREAD_THRESHOLD;
+      const isSpreading = dist > GESTURE.SPREAD_THRESHOLD;
 
       return { isPinching, isSpreading };
     });

@@ -13,8 +13,7 @@ import type {
   TelemetrySession,
   Vec3,
 } from '../types/telemetry';
-
-const DEFAULT_CAPACITY = 90;
+import { TELEMETRY_RECORDER } from '../config';
 
 function generateId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -67,7 +66,7 @@ export interface TelemetryRecorderResult {
   ) => void;
 }
 
-export function useTelemetryRecorder(capacity: number = DEFAULT_CAPACITY): TelemetryRecorderResult {
+export function useTelemetryRecorder(capacity: number = TELEMETRY_RECORDER.DEFAULT_CAPACITY): TelemetryRecorderResult {
   const bufferRef = useRef<TelemetryBuffer>(makeEmptyBuffer(capacity));
   const frameCounterRef = useRef<number>(0);
 
@@ -189,7 +188,7 @@ export function useTelemetryRecorder(capacity: number = DEFAULT_CAPACITY): Telem
       if (newEvents.length > 0) {
         setGestureEvents((prev) => {
           const next = [...prev, ...newEvents];
-          return next.length > 1000 ? next.slice(-1000) : next;
+          return next.length > TELEMETRY_RECORDER.MAX_GESTURE_EVENTS ? next.slice(-TELEMETRY_RECORDER.MAX_GESTURE_EVENTS) : next;
         });
       }
     },

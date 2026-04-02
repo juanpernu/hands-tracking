@@ -1,4 +1,5 @@
 import { useRef, useCallback } from 'react';
+import { COLLISION } from '../config';
 
 export interface PanelRect {
   id: string;
@@ -40,50 +41,70 @@ export function usePanelCollisions(): PanelCollisionManager {
     panel.x = x;
     panel.y = y;
 
-    // Push other panels out of the way
-    for (const [otherId, other] of panelsRef.current) {
-      if (otherId === id) continue;
+    // Push other panels out of the way (cascade up to 3 passes)
+    const panelIds = Array.from(panelsRef.current.keys());
+    for (let pass = 0; pass < COLLISION.ITERATIONS; pass++) {
+      let hadOverlap = false;
 
-      const ow = other.el.offsetWidth;
-      const oh = other.el.offsetHeight;
+      for (let i = 0; i < panelIds.length; i++) {
+        for (let j = i + 1; j < panelIds.length; j++) {
+          const aId = panelIds[i];
+          const bId = panelIds[j];
+          const a = panelsRef.current.get(aId)!;
+          const b = panelsRef.current.get(bId)!;
 
-      // Check overlap
-      if (x < other.x + ow && x + pw > other.x &&
-          y < other.y + oh && y + ph > other.y) {
-        // Calculate overlap on each axis
-        const overlapX = Math.min(x + pw - other.x, other.x + ow - x);
-        const overlapY = Math.min(y + ph - other.y, other.y + oh - y);
+          const aw = a.el.offsetWidth;
+          const ah = a.el.offsetHeight;
+          const bw = b.el.offsetWidth;
+          const bh = b.el.offsetHeight;
 
-        // Push along smallest overlap axis
-        const centerX = x + pw / 2;
-        const otherCenterX = other.x + ow / 2;
-        const centerY = y + ph / 2;
-        const otherCenterY = other.y + oh / 2;
+          // AABB overlap calculation
+          const overlapX = Math.min(a.x + aw, b.x + bw) - Math.max(a.x, b.x);
+          const overlapY = Math.min(a.y + ah, b.y + bh) - Math.max(a.y, b.y);
 
-        if (overlapX < overlapY) {
-          // Push horizontally
-          if (centerX < otherCenterX) {
-            other.x = x + pw + 4; // 4px gap
-          } else {
-            other.x = x - ow - 4;
-          }
-        } else {
-          // Push vertically
-          if (centerY < otherCenterY) {
-            other.y = y + ph + 4;
-          } else {
-            other.y = y - oh - 4;
+          if (overlapX > 0 && overlapY > 0) {
+            hadOverlap = true;
+
+            // Determine which panel to push (never push the one being dragged)
+            const [pushId, pushed, pusher, pusherW, pusherH, pushedW, pushedH] =
+              aId === id
+                ? [bId, b, a, aw, ah, bw, bh]
+                : [aId, a, b, bw, bh, aw, ah];
+
+            // Push along smallest overlap axis
+            const centerPusherX = pusher.x + pusherW / 2;
+            const centerPushedX = pushed.x + pushedW / 2;
+            const centerPusherY = pusher.y + pusherH / 2;
+            const centerPushedY = pushed.y + pushedH / 2;
+
+            if (overlapX < overlapY) {
+              // Push horizontally
+              if (centerPusherX < centerPushedX) {
+                pushed.x = pusher.x + pusherW + COLLISION.PANEL_GAP;
+              } else {
+                pushed.x = pusher.x - pushedW - COLLISION.PANEL_GAP;
+              }
+            } else {
+              // Push vertically
+              if (centerPusherY < centerPushedY) {
+                pushed.y = pusher.y + pusherH + COLLISION.PANEL_GAP;
+              } else {
+                pushed.y = pusher.y - pushedH - COLLISION.PANEL_GAP;
+              }
+            }
+
+            // Clamp pushed panel to screen bounds
+            pushed.x = Math.max(0, Math.min(pushed.x, window.innerWidth - pushedW));
+            pushed.y = Math.max(0, Math.min(pushed.y, window.innerHeight - pushedH));
+
+            // Apply to DOM immediately for responsiveness
+            pushed.el.style.left = `${pushed.x}px`;
+            pushed.el.style.top = `${pushed.y}px`;
           }
         }
-
-        // Clamp pushed panel
-        other.x = Math.max(0, Math.min(other.x, window.innerWidth - ow));
-        other.y = Math.max(0, Math.min(other.y, window.innerHeight - oh));
-
-        // Apply to DOM immediately for responsiveness
-        other.el.style.left = `${other.x}px`;
-        other.el.style.top = `${other.y}px`;
       }
+
+      if (!hadOverlap) break;
     }
 
     return { x, y };

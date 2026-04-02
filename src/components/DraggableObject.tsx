@@ -1,5 +1,6 @@
 import React from 'react';
 import type { DraggableObjectData } from '../types';
+import { UI } from '../config';
 
 interface DraggableObjectProps extends DraggableObjectData {
   isHovered: boolean;
@@ -49,9 +50,9 @@ export const DraggableObject = React.memo(function DraggableObject({
     width,
     height,
     backgroundColor: color,
-    borderRadius: 8,
+    borderRadius: UI.OBJECT_BORDER_RADIUS,
     transition:
-      'transform 150ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+      `transform ${UI.TRANSITION_DURATION_MS}ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow ${UI.TRANSITION_DURATION_MS}ms cubic-bezier(0.4, 0, 0.2, 1)`,
     cursor: isGrabbed ? 'grabbing' : 'grab',
     ...stateStyles,
   };

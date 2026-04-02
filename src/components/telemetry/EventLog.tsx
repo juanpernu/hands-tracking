@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
 import type { TelemetryLogEntry } from '../../hooks/useTelemetryLogger';
+import { PANEL } from '../../config';
 
 interface EventLogProps {
   entries: TelemetryLogEntry[];
@@ -52,7 +53,7 @@ export function EventLog({ entries, onClear, onExport }: EventLogProps) {
             Waiting for hand events...
           </div>
         )}
-        {visibleEntries.slice(-50).map((entry) => (
+        {visibleEntries.slice(-PANEL.EVENT_LOG_VISIBLE_ENTRIES).map((entry) => (
           <div key={entry.id} style={entryStyle}>
             <span style={{ color: 'rgba(255,255,255,0.3)', marginRight: 6, flexShrink: 0 }}>
               {formatTime(entry.timestamp)}
@@ -77,7 +78,7 @@ export function EventLog({ entries, onClear, onExport }: EventLogProps) {
 }
 
 const containerStyle: React.CSSProperties = {
-  width: 320,
+  width: PANEL.EVENT_LOG_WIDTH,
   background: 'rgba(0,0,0,0.78)',
   border: '1px solid rgba(255,255,255,0.1)',
   borderRadius: 6,
@@ -109,7 +110,7 @@ const buttonStyle: React.CSSProperties = {
 };
 
 const scrollStyle: React.CSSProperties = {
-  maxHeight: 300,
+  maxHeight: PANEL.EVENT_LOG_MAX_HEIGHT,
   overflowY: 'auto',
   padding: '4px 10px 6px',
 };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import type { HandData } from '../types';
+import { CAMERA } from '../config';
 
 const MODEL_ASSET_PATH =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
@@ -80,7 +81,7 @@ export function useHandTracking(): UseHandTrackingReturn {
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480 },
+          video: { width: CAMERA.WIDTH, height: CAMERA.HEIGHT },
         });
       } catch (err) {
         if (!cancelled) {
@@ -126,11 +127,11 @@ export function useHandTracking(): UseHandTrackingReturn {
             modelAssetPath: MODEL_ASSET_PATH,
             delegate: 'GPU',
           },
-          numHands: 2,
+          numHands: CAMERA.NUM_HANDS,
           runningMode: 'VIDEO',
-          minHandDetectionConfidence: 0.7,
-          minHandPresenceConfidence: 0.7,
-          minTrackingConfidence: 0.5,
+          minHandDetectionConfidence: CAMERA.MIN_DETECTION_CONFIDENCE,
+          minHandPresenceConfidence: CAMERA.MIN_PRESENCE_CONFIDENCE,
+          minTrackingConfidence: CAMERA.MIN_TRACKING_CONFIDENCE,
         });
       } catch (err) {
         if (!cancelled) {

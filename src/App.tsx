@@ -4,6 +4,7 @@ import { DraggableObject } from './components/DraggableObject';
 import HandCursor from './components/HandCursor';
 import CameraPreview from './components/CameraPreview';
 import { DraggablePanel } from './components/DraggablePanel';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { TelemetryOverlay } from './components/telemetry/TelemetryOverlay';
 import { HandSkeleton } from './components/telemetry/HandSkeleton';
 import { VelocityVectors } from './components/telemetry/VelocityVectors';
@@ -315,24 +316,26 @@ export default function App() {
       />
 
       {/* Telemetry overlay — press T */}
-      <TelemetryOverlay
-        visible={telemetryVisible}
-        onToggle={() => setTelemetryVisible((v) => !v)}
-      >
-        <HandSkeleton
-          hands={hands}
-          physicsData={physicsData}
-          workspaceWidth={W}
-          workspaceHeight={H}
-        />
-        <VelocityVectors
-          hands={hands}
-          physicsData={physicsData}
-          workspaceWidth={W}
-          workspaceHeight={H}
-        />
-        <GestureTimeline entries={timelineEntries} workspaceWidth={W} />
-      </TelemetryOverlay>
+      <ErrorBoundary inline fallbackLabel="Telemetry error">
+        <TelemetryOverlay
+          visible={telemetryVisible}
+          onToggle={() => setTelemetryVisible((v) => !v)}
+        >
+          <HandSkeleton
+            hands={hands}
+            physicsData={physicsData}
+            workspaceWidth={W}
+            workspaceHeight={H}
+          />
+          <VelocityVectors
+            hands={hands}
+            physicsData={physicsData}
+            workspaceWidth={W}
+            workspaceHeight={H}
+          />
+          <GestureTimeline entries={timelineEntries} workspaceWidth={W} />
+        </TelemetryOverlay>
+      </ErrorBoundary>
 
       {/* Status overlays */}
       {error && (
