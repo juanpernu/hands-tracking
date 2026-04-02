@@ -13,7 +13,7 @@ export const clipboardPlugin: Plugin = {
         if (!selection) return { success: false, feedback: 'No text selected' };
         try {
           await navigator.clipboard.writeText(selection);
-          return { success: true, feedback: `Copied: "${selection.slice(0, 30)}..."`, data: selection };
+          return { success: true, feedback: 'Text copied to clipboard', data: selection };
         } catch {
           return { success: false, feedback: 'Clipboard access denied' };
         }
@@ -25,7 +25,7 @@ export const clipboardPlugin: Plugin = {
       async execute() {
         try {
           const text = await navigator.clipboard.readText();
-          return { success: true, feedback: `Clipboard: "${text.slice(0, 30)}..."`, data: text };
+          return { success: true, feedback: 'Clipboard text read', data: text };
         } catch {
           return { success: false, feedback: 'Clipboard access denied' };
         }

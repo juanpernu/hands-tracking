@@ -1,4 +1,5 @@
 import type { Plugin } from '../types';
+import { validateUrl } from './url-validation';
 
 export const navigationPlugin: Plugin = {
   id: 'dom.navigation',
@@ -26,10 +27,12 @@ export const navigationPlugin: Plugin = {
       description: 'Open a URL in the current tab',
       params: [{ name: 'url', type: 'string' as const, required: true, description: 'The URL to navigate to' }],
       async execute(params) {
-        const url = params.url as string;
-        if (!url) return { success: false, feedback: 'No URL provided' };
-        window.location.href = url;
-        return { success: true, feedback: `Navigating to ${url}` };
+        const raw = params.url as string;
+        if (!raw) return { success: false, feedback: 'No URL provided' };
+        const result = validateUrl(raw);
+        if (!result.valid) return { success: false, feedback: result.reason };
+        window.location.href = result.url;
+        return { success: true, feedback: `Navigating to ${result.url}` };
       },
     },
   ],

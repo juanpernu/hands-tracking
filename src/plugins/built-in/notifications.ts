@@ -1,5 +1,8 @@
 import type { Plugin } from '../types';
 
+let lastNotificationTime = 0;
+const NOTIFICATION_COOLDOWN_MS = 3000;
+
 export const notificationsPlugin: Plugin = {
   id: 'browser.notifications',
   name: 'Notifications',
@@ -21,14 +24,14 @@ export const notificationsPlugin: Plugin = {
           const permission = await Notification.requestPermission();
           if (permission !== 'granted') return { success: false, feedback: 'Notifications permission denied' };
         }
+        const now = Date.now();
+        if (now - lastNotificationTime < NOTIFICATION_COOLDOWN_MS) {
+          return { success: false, feedback: 'Notification cooldown active' };
+        }
+        lastNotificationTime = now;
         new Notification(title, { body: (params.body as string) || '' });
         return { success: true, feedback: `Notification: ${title}` };
       },
     },
   ],
-  async init() {
-    if ('Notification' in window && Notification.permission === 'default') {
-      await Notification.requestPermission();
-    }
-  },
 };

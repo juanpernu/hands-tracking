@@ -21,7 +21,8 @@ export function useActionDispatcher(registry: RegistryLike) {
     try {
       return await action.execute(intent.params || {});
     } catch (err) {
-      return { success: false, feedback: (err as Error).message };
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, feedback: message || 'Unknown error' };
     }
   }, [registry]);
 
