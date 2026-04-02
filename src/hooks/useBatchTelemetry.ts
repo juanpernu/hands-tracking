@@ -7,6 +7,7 @@ import type {
   HandTelemetry,
   GestureEvent,
 } from '../types/telemetry';
+import type { SpatialTelemetryData } from '../types/spatial';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,6 +37,7 @@ interface BatchTelemetryResult {
     grips: GripState[],
     motions: MotionPattern[],
     timestamp: number,
+    spatialData?: ReadonlyMap<string, SpatialTelemetryData>,
   ) => void;
   sessionId: string;
   batchCount: number;
@@ -169,6 +171,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
       grips: GripState[],
       motions: MotionPattern[],
       timestamp: number,
+      spatialData?: ReadonlyMap<string, SpatialTelemetryData>,
     ) => {
       if (!enabled) return;
 
@@ -183,6 +186,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
         if (!hand || !p || !g || !m) continue;
 
         const frameId = frameCounterRef.current++;
+        const spatial = spatialData?.get(hand.handedness);
         const frame: HandTelemetry = {
           frameId,
           timestamp,
@@ -192,6 +196,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
           physics: p,
           grip: g,
           motion: m,
+          ...(spatial ? { spatial } : {}),
         };
 
         buf.frames.push(frame);

@@ -26,7 +26,7 @@ import { useHandOverDOM } from './hooks/useHandOverDOM';
 import { useSpatialFeedback } from './hooks/useSpatialFeedback';
 import { useWindowSize } from './hooks/useWindowSize';
 import { magnitude3 } from './utils/geometry';
-import type { SpatialEvent } from './types/spatial';
+import type { SpatialEvent, SpatialTelemetryData } from './types/spatial';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
 
@@ -90,7 +90,7 @@ export default function App() {
 
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
-  const { log, processFrame, clearLog, exportLog } = useTelemetryLogger();
+  const { log, processFrame, addEntry, clearLog, exportLog } = useTelemetryLogger();
   const { record: recordBatch } = useBatchTelemetry();
 
   // --- Spatial tracking hooks ---
@@ -99,10 +99,16 @@ export default function App() {
   const spatialFeedback = useSpatialFeedback({ spatialIndex, handOverDOM });
 
   // Wire spatial events into telemetry log
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const addSpatialLogEntry = useCallback((_event: SpatialEvent) => {
-    // Spatial events are available for future telemetry integration
-  }, []);
+  const addSpatialLogEntry = useCallback((event: SpatialEvent) => {
+    addEntry({
+      type: event.type,
+      timestamp: event.timestamp,
+      description: event.target
+        ? `${event.type} → ${event.target}`
+        : event.type,
+      data: event.detail,
+    });
+  }, [addEntry]);
 
   handOverDOM.onSpatialEvent.current = addSpatialLogEntry;
   spatialFeedback.onFeedbackEvent.current = addSpatialLogEntry;
@@ -162,9 +168,24 @@ export default function App() {
       now,
     );
 
-    // 2. Record telemetry
-    record(currentHands, physics, grips, motions, now);
-    recordBatch(currentHands, physics, grips, motions, now);
+    // 2. Build spatial telemetry data from hand-over-DOM state
+    const spatialMap = new Map<string, SpatialTelemetryData>();
+    const spatialState = handOverDOM.handSpatialRef.current;
+    for (const [key, state] of Object.entries({ Left: spatialState.left, Right: spatialState.right })) {
+      if (state?.stack) {
+        spatialMap.set(key as 'Left' | 'Right', {
+          topElement: state.hoverTarget?.selector ?? null,
+          topElementScore: state.hoverTarget?.relevanceScore ?? 0,
+          isOverInteractive: state.isOverInteractive,
+          hoverDurationMs: state.hoverDurationMs,
+          elementCount: state.stack.elements.length,
+        });
+      }
+    }
+
+    // Record telemetry
+    record(currentHands, physics, grips, motions, now, spatialMap);
+    recordBatch(currentHands, physics, grips, motions, now, spatialMap);
     processFrame(currentHands, physics, grips, motions, now);
 
     // 3. Shake-to-clear

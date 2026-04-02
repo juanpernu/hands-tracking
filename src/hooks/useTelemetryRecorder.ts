@@ -13,6 +13,7 @@ import type {
   TelemetrySession,
   Vec3,
 } from '../types/telemetry';
+import type { SpatialTelemetryData } from '../types/spatial';
 import { TELEMETRY_RECORDER } from '../config';
 
 function generateId(): string {
@@ -62,7 +63,8 @@ export interface TelemetryRecorderResult {
     physics: HandPhysics[],
     grips: GripState[],
     motions: MotionPattern[],
-    timestamp: number
+    timestamp: number,
+    spatialData?: ReadonlyMap<string, SpatialTelemetryData>,
   ) => void;
 }
 
@@ -84,7 +86,8 @@ export function useTelemetryRecorder(capacity: number = TELEMETRY_RECORDER.DEFAU
       physics: HandPhysics[],
       grips: GripState[],
       motions: MotionPattern[],
-      timestamp: number
+      timestamp: number,
+      spatialData?: ReadonlyMap<string, SpatialTelemetryData>,
     ) => {
       const buffer = bufferRef.current;
       const frameId = frameCounterRef.current++;
@@ -101,6 +104,7 @@ export function useTelemetryRecorder(capacity: number = TELEMETRY_RECORDER.DEFAU
         const handedness = hand.handedness;
 
         // Assemble the per-frame snapshot.
+        const spatial = spatialData?.get(handedness);
         const frame: HandTelemetry = {
           frameId,
           timestamp,
@@ -110,6 +114,7 @@ export function useTelemetryRecorder(capacity: number = TELEMETRY_RECORDER.DEFAU
           physics: handPhysics,
           grip,
           motion,
+          ...(spatial ? { spatial } : {}),
         };
 
         // Write into the ring buffer — O(1), no allocation.
