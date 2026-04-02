@@ -14,6 +14,7 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import type { GestureResult } from './useGestureDetection';
 import type { HandData, GestureState, DraggableObjectData } from '../types';
 import type { GripState } from '../types/telemetry';
+import type { AgentGestureEvent, AgentGestureType } from '../agent/types';
 import { normalizedToPixel, magnitude3 } from '../utils/geometry';
 
 const EDGE_THRESHOLD = 0.08;
@@ -46,7 +47,11 @@ export interface UpdateInput {
   H: number;
 }
 
-export function useInteractionController() {
+interface InteractionControllerConfig {
+  onGestureEvent?: (event: AgentGestureEvent) => void;
+}
+
+export function useInteractionController(config?: InteractionControllerConfig) {
   // --- Reactive output state (only updates on meaningful transitions) ---
   const [gestureState, setGestureState] = useState<GestureState>('idle');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -80,6 +85,16 @@ export function useInteractionController() {
   });
   const shakeClearingRef = useRef(false);
   const shakeTimeoutIdsRef = useRef<number[]>([]);
+
+  // --- Gesture event callback ---
+  const onGestureEventRef = useRef(config?.onGestureEvent);
+  onGestureEventRef.current = config?.onGestureEvent;
+
+  const emitGesture = useCallback((type: AgentGestureType, hands: HandData[], input?: UpdateInput) => {
+    const cb = onGestureEventRef.current;
+    if (!cb) return;
+    cb({ type, hands, timestamp: performance.now() });
+  }, []);
 
   // Helper: set grabbed id with ref sync
   const applyGrabbedId = useCallback((id: string | null) => {
@@ -213,6 +228,7 @@ export function useInteractionController() {
       removeObject(hovered);
       if (grabbedIdRef.current === hovered) applyGrabbedId(null);
       if (grabbedIdLeftRef.current === hovered) applyGrabbedIdLeft(null);
+      emitGesture('both-spread', hands);
       newGestureState = 'deleting';
     } else if (bothPinchingRising) {
       // Check if either hand is over an object — if so, grab with both hands instead of creating
@@ -248,6 +264,7 @@ export function useInteractionController() {
         newGestureState = 'grabbing';
       } else {
         addObject(cursorPixel);
+        emitGesture('both-pinch', hands);
         newGestureState = 'creating';
       }
     } else if (isBothPinching) {
@@ -299,11 +316,15 @@ export function useInteractionController() {
         if (obj) {
           grabOffsetRef.current = { x: cursorPixel.x - obj.x, y: cursorPixel.y - obj.y };
           applyGrabbedId(hovered);
+          emitGesture('pinch-start', hands);
           newGestureState = 'grabbing';
         }
       }
     } else {
-      if (grabbedIdRef.current) applyGrabbedId(null);
+      if (grabbedIdRef.current) {
+        emitGesture('pinch-release', hands);
+        applyGrabbedId(null);
+      }
       newGestureState = hovered ? 'hovering' : 'idle';
     }
 
@@ -345,7 +366,7 @@ export function useInteractionController() {
     applyGestureState(newGestureState);
 
     return { cursorPixel, resolvedGestureState: newGestureState };
-  }, [applyGestureState, applyGrabbedId, applyGrabbedIdLeft, applyHoveredId, applyEdgeWarning]);
+  }, [applyGestureState, applyGrabbedId, applyGrabbedIdLeft, applyHoveredId, applyEdgeWarning, emitGesture]);
 
   /**
    * Shake-to-clear update — separated so it can receive physics data.
@@ -381,6 +402,7 @@ export function useInteractionController() {
         }
 
         if (reversals >= SHAKE_CLEAR_REVERSALS && objects.length > 0 && !shakeClearingRef.current) {
+          emitGesture('shake', hands);
           shakeClearingRef.current = true;
           shakeHistoryRef.current.lastClearTime = now;
           shakeHistoryRef.current.directions = [];
@@ -399,7 +421,7 @@ export function useInteractionController() {
         if (shakeHistoryRef.current.directions.length > 0) shakeHistoryRef.current.directions.pop();
       }
     }
-  }, []);
+  }, [emitGesture]);
 
   // Cleanup shake timeouts on unmount
   useEffect(() => {
