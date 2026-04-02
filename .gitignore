@@ -30,3 +30,4 @@ telemetry-data/
 
 # Superpowers brainstorm sessions
 .superpowers/
+.claude/
