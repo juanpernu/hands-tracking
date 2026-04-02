@@ -19,6 +19,7 @@ import { useHandAnalysis } from './hooks/useHandAnalysis';
 import { useInteractionController } from './hooks/useInteractionController';
 import { useTelemetryRecorder } from './hooks/useTelemetryRecorder';
 import { useTelemetryLogger } from './hooks/useTelemetryLogger';
+import { useBatchTelemetry } from './hooks/useBatchTelemetry';
 import { useWindowSize } from './hooks/useWindowSize';
 import { magnitude3 } from './utils/geometry';
 
@@ -85,6 +86,7 @@ export default function App() {
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
   const { log, processFrame, clearLog, exportLog } = useTelemetryLogger();
+  const { record: recordBatch } = useBatchTelemetry();
 
   // --- UI state ---
   const [telemetryVisible, setTelemetryVisible] = useState(true);
@@ -143,7 +145,8 @@ export default function App() {
 
     // 2. Record telemetry
     record(currentHands, physics, grips, motions, now);
-    processFrame(physics, grips, motions, now);
+    recordBatch(currentHands, physics, grips, motions, now);
+    processFrame(currentHands, physics, grips, motions, now);
 
     // 3. Shake-to-clear
     updateShake(currentHands, physics, currentObjects, removeObject, now);
@@ -198,6 +201,7 @@ export default function App() {
   }, [
     computeFrame,
     record,
+    recordBatch,
     processFrame,
     updateShake,
     detectGesture,

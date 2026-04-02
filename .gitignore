@@ -23,8 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 
+telemetry-data/
+
 # Telemetry exports
 /telemetry/
 
 # Superpowers brainstorm sessions
 .superpowers/
+.claude/

@@ -1,9 +1,10 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import telemetryPlugin from './vite-plugin-telemetry'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), telemetryPlugin()],
   server: {
     // IMPORTANT: These COOP/COEP headers are required for SharedArrayBuffer
     // and cross-origin isolation used by MediaPipe WASM. In production, your

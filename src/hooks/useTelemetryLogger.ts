@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback } from 'react';
+import type { HandData } from '../types';
 import type { HandPhysics, GripState, MotionPattern } from '../types/telemetry';
 import { magnitude3 } from '../utils/geometry';
 
@@ -12,6 +13,10 @@ export type TelemetryEventType =
   | 'sudden-stop'         // moving fast then stopping
   | 'grip-change'         // grip state transition
   | 'motion-detected'     // swipe, circular, etc.
+  | 'object-grab'         // hand grabbed a DOM object
+  | 'object-move'         // DOM object being moved
+  | 'object-release'      // hand released a DOM object
+  | 'object-collision'    // two DOM objects collided
   | 'snapshot';           // periodic data capture
 
 export interface TelemetryLogEntry {
@@ -59,16 +64,23 @@ function createHandState(): HandState {
   };
 }
 
+// Clap detection thresholds (from telemetry analysis)
+const CLAP_MIN_VELOCITY = 0.4;             // both hands must be moving fast
+const CLAP_DEBOUNCE_MS = 1500;             // prevent double-detection
+
 export interface TelemetryLoggerResult {
   log: TelemetryLogEntry[];
   processFrame: (
+    hands: HandData[],
     physics: HandPhysics[],
     grips: GripState[],
     motions: MotionPattern[],
     timestamp: number,
   ) => void;
+  addEntry: (entry: Omit<TelemetryLogEntry, 'id'>) => void;
   clearLog: () => void;
   exportLog: () => string;
+  onClapRef: React.MutableRefObject<(() => void) | null>;
 }
 
 export function useTelemetryLogger(): TelemetryLoggerResult {
@@ -81,6 +93,14 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
     Right: createHandState(),
   });
   const lastSnapshotRef = useRef(0);
+  const lastClapTimeRef = useRef(0);
+  const onClapRef = useRef<(() => void) | null>(null);
+  // Clap requires 2 phases: convergence (moving toward each other) then impact (sudden stop)
+  const clapPhaseRef = useRef<{ converging: boolean; convergeTime: number; peakSpeed: number }>({
+    converging: false,
+    convergeTime: 0,
+    peakSpeed: 0,
+  });
 
   const addEntry = useCallback((entry: Omit<TelemetryLogEntry, 'id'>) => {
     const id = ++idCounterRef.current;
@@ -91,11 +111,80 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
   }, []);
 
   const processFrame = useCallback((
+    hands: HandData[],
     physics: HandPhysics[],
     grips: GripState[],
     motions: MotionPattern[],
     timestamp: number,
   ) => {
+    // --- Clap detection: two-phase ---
+    // Phase 1: both hands fast + converging in X
+    // Phase 2: impact = (a) both slow + palms close, OR (b) hand lost (palms occlude)
+    const phase = clapPhaseRef.current;
+
+    if (timestamp - lastClapTimeRef.current > CLAP_DEBOUNCE_MS) {
+      if (hands.length >= 2 && physics.length >= 2) {
+        const leftP = physics.find((p) => p.handedness === 'Left');
+        const rightP = physics.find((p) => p.handedness === 'Right');
+
+        if (leftP && rightP) {
+          const leftSpeed = magnitude3(leftP.palmVelocity);
+          const rightSpeed = magnitude3(rightP.palmVelocity);
+          const converging =
+            (leftP.palmVelocity.x > 0 && rightP.palmVelocity.x < 0) ||
+            (leftP.palmVelocity.x < 0 && rightP.palmVelocity.x > 0);
+          const bothFast = leftSpeed > CLAP_MIN_VELOCITY && rightSpeed > CLAP_MIN_VELOCITY;
+
+          if (!phase.converging) {
+            if (bothFast && converging) {
+              phase.converging = true;
+              phase.convergeTime = timestamp;
+              phase.peakSpeed = Math.max(leftSpeed, rightSpeed);
+            }
+          } else {
+            phase.peakSpeed = Math.max(phase.peakSpeed, leftSpeed, rightSpeed);
+            const timeSinceConverge = timestamp - phase.convergeTime;
+
+            // Check impact: both slowed AND palms close
+            const bothSlowed = leftSpeed < 0.15 && rightSpeed < 0.15;
+            const leftHand = hands.find((h) => h.handedness === 'Left');
+            const rightHand = hands.find((h) => h.handedness === 'Right');
+            const palmsClose = leftHand && rightHand
+              ? Math.abs(leftHand.landmarks[9].x - rightHand.landmarks[9].x) < 0.15
+              : false;
+
+            if (bothSlowed && palmsClose && timeSinceConverge < 500) {
+              lastClapTimeRef.current = timestamp;
+              phase.converging = false;
+              addEntry({
+                timestamp, type: 'clap', handedness: 'Both',
+                description: `CLAP! peak=${(phase.peakSpeed * 1200).toFixed(0)}px/s → stopped in ${timeSinceConverge.toFixed(0)}ms`,
+                data: { velocity: phase.peakSpeed },
+              });
+              if (onClapRef.current) onClapRef.current();
+            } else if (timeSinceConverge > 500) {
+              phase.converging = false;
+            }
+          }
+        }
+      } else if (phase.converging && hands.length < 2) {
+        // Phase 2b: hand lost after convergence = palms collided and occluded one hand
+        const timeSinceConverge = timestamp - phase.convergeTime;
+        if (timeSinceConverge < 400) {
+          lastClapTimeRef.current = timestamp;
+          phase.converging = false;
+          addEntry({
+            timestamp, type: 'clap', handedness: 'Both',
+            description: `CLAP! peak=${(phase.peakSpeed * 1200).toFixed(0)}px/s → hand lost in ${timeSinceConverge.toFixed(0)}ms`,
+            data: { velocity: phase.peakSpeed },
+          });
+          if (onClapRef.current) onClapRef.current();
+        } else {
+          phase.converging = false;
+        }
+      }
+    }
+
     // Periodic snapshot
     if (timestamp - lastSnapshotRef.current >= SNAPSHOT_INTERVAL_MS) {
       lastSnapshotRef.current = timestamp;
@@ -244,5 +333,5 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
     return JSON.stringify(logRef.current, null, 2);
   }, []);
 
-  return { log, processFrame, clearLog, exportLog };
+  return { log, processFrame, addEntry, clearLog, exportLog, onClapRef };
 }
