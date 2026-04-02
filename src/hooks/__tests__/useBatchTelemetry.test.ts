@@ -53,7 +53,7 @@ function makeMotion(): MotionPattern {
 
 describe('useBatchTelemetry', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ now: 1743609000000 }); // fixed epoch so Date.now() is deterministic
     fetchMock.mockClear();
     sendBeaconMock.mockClear();
   });
@@ -99,15 +99,27 @@ describe('useBatchTelemetry', () => {
     expect(result.current.batchCount).toBe(1);
   });
 
-  it('flushes on time interval', () => {
+  it('does not flush on interval before maxIntervalMs elapses', () => {
     const { result } = renderHook(() =>
       useBatchTelemetry({ maxFrames: 1000, maxIntervalMs: 5000, enabled: true }),
     );
 
     act(() => result.current.record([makeHand()], [makePhysics()], [makeGrip()], [makeMotion()], 100));
 
-    act(() => vi.advanceTimersByTime(6000));
+    // Advance 2 seconds — should NOT flush yet (maxIntervalMs is 5000)
+    act(() => vi.advanceTimersByTime(2000));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
+  it('flushes on interval after maxIntervalMs elapses', () => {
+    const { result } = renderHook(() =>
+      useBatchTelemetry({ maxFrames: 1000, maxIntervalMs: 5000, enabled: true }),
+    );
+
+    act(() => result.current.record([makeHand()], [makePhysics()], [makeGrip()], [makeMotion()], 100));
+
+    // Advance past maxIntervalMs — should flush
+    act(() => vi.advanceTimersByTime(6000));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -126,7 +138,6 @@ describe('useBatchTelemetry', () => {
   it('uses default config when no arguments provided', () => {
     const { result } = renderHook(() => useBatchTelemetry());
 
-    // Should not throw and should have sensible defaults
     expect(result.current.sessionId).toBeTruthy();
     expect(result.current.batchCount).toBe(0);
     expect(result.current.pendingFrames).toBe(0);
@@ -142,21 +153,18 @@ describe('useBatchTelemetry', () => {
       act(() => result.current.record([makeHand()], [makePhysics()], [makeGrip()], [makeMotion()], i));
     }
 
-    // Trigger beforeunload
     act(() => {
       window.dispatchEvent(new Event('beforeunload'));
     });
 
-    // Should have called sendBeacon: 2 batch chunks (15 + 5) + 1 summary = 3 calls
+    // 2 batch chunks (15 + 5) + 1 summary = 3 calls
     expect(sendBeaconMock).toHaveBeenCalledTimes(3);
-    // First call should be batch endpoint
     expect(sendBeaconMock.mock.calls[0][0]).toBe('/api/telemetry/batch');
-    // Last call should be session-end
+    expect(sendBeaconMock.mock.calls[1][0]).toBe('/api/telemetry/batch');
     expect(sendBeaconMock.mock.calls[2][0]).toBe('/api/telemetry/session-end');
   });
 
-  it('retries failed batches on next flush', async () => {
-    // First flush will fail
+  it('retries failed batches on next flush with the same payload', async () => {
     fetchMock.mockRejectedValueOnce(new Error('Network error'));
 
     const { result } = renderHook(() =>
@@ -171,7 +179,7 @@ describe('useBatchTelemetry', () => {
     // Wait for the .catch to run
     await act(async () => { await Promise.resolve(); });
 
-    // Reset mock -- next flush should succeed
+    // Reset mock — next flush should succeed
     fetchMock.mockResolvedValue({ ok: true });
 
     // Record more frames to trigger second flush
@@ -179,7 +187,16 @@ describe('useBatchTelemetry', () => {
       act(() => result.current.record([makeHand()], [makePhysics()], [makeGrip()], [makeMotion()], 100 + i));
     }
 
-    // Should have called fetch: 1 (failed) + 1 (retry of failed) + 1 (new batch) = 3
+    // 1 (failed original) + 1 (retry of original) + 1 (new batch) = 3
     expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    // Verify the retry payload is the same as the original failed payload
+    const originalPayload = fetchMock.mock.calls[0][1].body;
+    const retriedPayload = fetchMock.mock.calls[1][1].body;
+    expect(retriedPayload).toBe(originalPayload);
+
+    // Verify the third call is the new batch (different sequenceNum)
+    const newBatchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(newBatchBody.sequenceNum).toBe(2);
   });
 });

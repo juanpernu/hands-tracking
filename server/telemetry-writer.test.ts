@@ -35,14 +35,14 @@ describe('writeBatch', () => {
     const sessionDir = await readdir(join(tempDir, '2026-04-02'));
     expect(sessionDir).toContain('test-session-abc');
     const files = await readdir(join(tempDir, '2026-04-02', 'test-session-abc'));
-    expect(files).toContain('batch-001.json');
+    expect(files).toContain('batch-000001.json');
   });
 
   it('writes valid JSON with correct payload', async () => {
     const batch = makeBatch({ sequenceNum: 5 });
     await writeBatch(config, batch);
     const content = await readFile(
-      join(tempDir, '2026-04-02', 'test-session-abc', 'batch-005.json'),
+      join(tempDir, '2026-04-02', 'test-session-abc', 'batch-000005.json'),
       'utf-8',
     );
     const parsed = JSON.parse(content);
@@ -74,14 +74,42 @@ describe('writeBatch', () => {
     await expect(writeBatch(config, makeBatch({ sequenceNum: NaN }))).rejects.toThrow('Invalid sequenceNum');
   });
 
+  it('rejects startTime before year 2000', async () => {
+    await expect(writeBatch(config, makeBatch({ startTime: 0 }))).rejects.toThrow('Invalid startTime');
+    await expect(writeBatch(config, makeBatch({ startTime: -1 }))).rejects.toThrow('Invalid startTime');
+    await expect(writeBatch(config, makeBatch({ startTime: NaN }))).rejects.toThrow('Invalid startTime');
+  });
+
   it('writes compact JSON for batches', async () => {
     await writeBatch(config, makeBatch());
     const content = await readFile(
-      join(tempDir, '2026-04-02', 'test-session-abc', 'batch-001.json'),
+      join(tempDir, '2026-04-02', 'test-session-abc', 'batch-000001.json'),
       'utf-8',
     );
-    // Compact JSON has no newlines except none
     expect(content.includes('\n')).toBe(false);
+  });
+
+  it('does not overwrite existing batch (returns exists)', async () => {
+    await writeBatch(config, makeBatch({ sequenceNum: 1 }));
+    // Writing the same sequenceNum again should not throw — silently skips
+    await writeBatch(config, makeBatch({ sequenceNum: 1 }));
+    // File still contains the original data
+    const content = await readFile(
+      join(tempDir, '2026-04-02', 'test-session-abc', 'batch-000001.json'),
+      'utf-8',
+    );
+    expect(JSON.parse(content).sequenceNum).toBe(1);
+  });
+
+  it('pads sequenceNum to 6 digits for consistent sorting', async () => {
+    await writeBatch(config, makeBatch({ sequenceNum: 1 }));
+    await writeBatch(config, makeBatch({ sequenceNum: 1000 }));
+    const files = await readdir(join(tempDir, '2026-04-02', 'test-session-abc'));
+    expect(files).toContain('batch-000001.json');
+    expect(files).toContain('batch-001000.json');
+    // Lexicographic sort matches numeric sort
+    const sorted = [...files].sort();
+    expect(sorted.indexOf('batch-000001.json')).toBeLessThan(sorted.indexOf('batch-001000.json'));
   });
 });
 
@@ -105,5 +133,19 @@ describe('writeSessionSummary', () => {
     const parsed = JSON.parse(content);
     expect(parsed.totalFrames).toBe(900);
     expect(parsed.eventBreakdown.swipe).toBe(5);
+  });
+
+  it('rejects invalid startTime', async () => {
+    const summary: SessionSummary = {
+      sessionId: 'test-session-abc',
+      startTime: 0,
+      endTime: 0,
+      totalFrames: 0,
+      totalEvents: 0,
+      totalBatches: 0,
+      avgSampleRateFps: 0,
+      eventBreakdown: {},
+    };
+    await expect(writeSessionSummary(config, summary)).rejects.toThrow('Invalid startTime');
   });
 });

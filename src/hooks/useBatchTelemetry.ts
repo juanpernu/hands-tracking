@@ -55,7 +55,7 @@ interface PendingBatch {
 
 const MAX_RETRIES = 3;
 const MAX_RETRY_QUEUE = 10;
-const BEACON_CHUNK_SIZE = 15; // ~15 frames * ~3KB ≈ 45KB, well under sendBeacon's 64KB limit
+const BEACON_CHUNK_SIZE = 15; // ~15 frames * ~3KB = ~45KB, well under sendBeacon's 64KB limit
 const DEFAULT_MAX_FRAMES = 500;
 const DEFAULT_MAX_INTERVAL_MS = 10_000;
 
@@ -82,7 +82,10 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
     startTime: 0,
     endTime: 0,
   });
-  const lastFlushRef = useRef(0);
+
+  // Initialized lazily on first record() call to avoid calling Date.now() during render.
+  const lastFlushRef = useRef(-1);
+  const mountedRef = useRef(true);
 
   const statsRef = useRef({
     totalFrames: 0,
@@ -96,6 +99,12 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
 
   // Keep sessionId accessible in callbacks without stale closures.
   const sessionIdRef = useRef(sessionId);
+
+  // Track mounted state to prevent setState after unmount.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // -----------------------------------------------------------------------
   // flush – process retry queue FIRST, then send the new batch
@@ -117,6 +126,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
         headers: { 'Content-Type': 'application/json' },
         body: item.payload,
       }).catch(() => {
+        if (!mountedRef.current) return;
         retryQueueRef.current.push({ payload: item.payload, retries: item.retries + 1 });
       });
     }
@@ -135,13 +145,14 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
 
     bufferRef.current = { frames: [], events: [], startTime: 0, endTime: 0 };
     lastFlushRef.current = Date.now();
-    setBatchCount(seq);
+    if (mountedRef.current) setBatchCount(seq);
 
     fetch('/api/telemetry/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payload,
     }).catch(() => {
+      if (!mountedRef.current) return;
       if (retryQueueRef.current.length < MAX_RETRY_QUEUE) {
         retryQueueRef.current.push({ payload, retries: 0 });
       }
@@ -160,6 +171,11 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
       timestamp: number,
     ) => {
       if (!enabled) return;
+
+      // Lazy-init lastFlushRef on first record call (avoids Date.now() during render).
+      if (lastFlushRef.current === -1) {
+        lastFlushRef.current = Date.now();
+      }
 
       const buf = bufferRef.current;
       const stats = statsRef.current;
@@ -209,7 +225,11 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
     if (!enabled) return;
 
     const id = setInterval(() => {
+      if (!mountedRef.current) return;
       setPendingFrames(bufferRef.current.frames.length);
+
+      // Skip interval-based flush until the first record() initializes lastFlushRef.
+      if (lastFlushRef.current === -1) return;
 
       const elapsed = Date.now() - lastFlushRef.current;
       if (elapsed >= maxIntervalMs && bufferRef.current.frames.length > 0) {
