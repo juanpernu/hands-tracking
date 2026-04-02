@@ -129,6 +129,7 @@ export default function App() {
   // --- Refs ---
   const cursorRef = useRef<HTMLDivElement>(null);
   const leftCursorRef = useRef<HTMLDivElement>(null);
+  const leftCursorSmoothed = useRef({ x: 0, y: 0, initialized: false });
   const gripIndicatorRef = useRef<HTMLDivElement>(null);
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
 
@@ -273,16 +274,27 @@ export default function App() {
       gripIndicatorRef.current.style.transform = `translate3d(${result.cursorPixel.x}px, ${result.cursorPixel.y}px, 0)`;
     }
 
-    // Drive left hand cursor independently from landmarks
+    // Drive left hand cursor with lerp smoothing (same as right hand)
     if (leftCursorRef.current) {
       const leftHand = currentHands.find((h) => h.handedness === 'Left');
       if (leftHand && leftHand.landmarks[8]) {
-        const lx = (1 - leftHand.landmarks[8].x) * currentW;
-        const ly = leftHand.landmarks[8].y * currentH;
-        leftCursorRef.current.style.transform = `translate3d(${lx}px, ${ly}px, 0)`;
+        const rawX = (1 - leftHand.landmarks[8].x) * currentW;
+        const rawY = leftHand.landmarks[8].y * currentH;
+        const s = leftCursorSmoothed.current;
+        if (!s.initialized) {
+          s.x = rawX;
+          s.y = rawY;
+          s.initialized = true;
+        } else {
+          const f = 0.3; // same lerp factor as useGestureDetection
+          s.x += (rawX - s.x) * f;
+          s.y += (rawY - s.y) * f;
+        }
+        leftCursorRef.current.style.transform = `translate3d(${s.x}px, ${s.y}px, 0)`;
         leftCursorRef.current.style.display = 'block';
       } else {
         leftCursorRef.current.style.display = 'none';
+        leftCursorSmoothed.current.initialized = false;
       }
     }
 
