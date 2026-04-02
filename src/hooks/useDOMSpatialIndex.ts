@@ -73,7 +73,30 @@ export function useDOMSpatialIndex(): UseDOMSpatialIndexReturn {
 
     const state = stateRef.current;
 
-    // Batch update rects
+    // Auto-discover trackable elements (draggable objects, panels, etc.)
+    // This ensures proximity/contact detection works between all relevant elements,
+    // not just those the hand has directly hovered over.
+    const trackables = document.querySelectorAll('[data-object-id], [data-trackable]');
+    for (const el of trackables) {
+      if (!state.registry.has(el)) {
+        const rect = el.getBoundingClientRect();
+        const score = 1; // base score for discovered-by-selector elements
+        state.registry.set(el, {
+          element: el,
+          tagName: el.tagName,
+          selector: el.getAttribute('data-object-id')
+            ? `[data-object-id="${el.getAttribute('data-object-id')}"]`
+            : el.tagName.toLowerCase(),
+          rect,
+          area: rect.width * rect.height,
+          relevanceScore: score,
+          isInteractive: false,
+        });
+      }
+      state.lastSeen.set(el, state.frameCount);
+    }
+
+    // Batch update rects for all tracked elements
     for (const [el, spatial] of state.registry) {
       const rect = el.getBoundingClientRect();
       spatial.rect = rect;
