@@ -154,6 +154,8 @@ export default function App() {
   mouseGrabbingRef.current = mouseGrabbing;
   const grabbedIdRef = useRef(grabbedId);
   grabbedIdRef.current = grabbedId;
+  const grabbedIdLeftRef = useRef(grabbedIdLeft);
+  grabbedIdLeftRef.current = grabbedIdLeft;
 
   // --- Main RAF interaction loop ---
   const rafCallbackRef = useRef<() => void>(() => {});
@@ -241,20 +243,22 @@ export default function App() {
     // Update rect cache (throttled internally to 10fps)
     spatialIndex.updateRects();
 
-    // Drag feedback — only when grabbing (use ref to avoid stale closure)
-    const currentGrabbedId = grabbedIdRef.current;
-    if (currentGrabbedId) {
-      const el = document.querySelector(`[data-object-id="${currentGrabbedId}"]`);
-      if (el) {
-        spatialFeedback.updateDragFeedback(
-          currentHands[0]?.handedness ?? 'Right',
-          el,
-          now,
-        );
-      }
+    // Drag feedback — for both hands independently
+    const currentGrabbedRight = grabbedIdRef.current;
+    const currentGrabbedLeft = grabbedIdLeftRef.current;
+
+    if (currentGrabbedRight) {
+      const el = document.querySelector(`[data-object-id="${currentGrabbedRight}"]`);
+      if (el) spatialFeedback.updateDragFeedback('Right', el, now);
+    } else {
+      spatialFeedback.clearDrag('Right');
+    }
+
+    if (currentGrabbedLeft) {
+      const el = document.querySelector(`[data-object-id="${currentGrabbedLeft}"]`);
+      if (el) spatialFeedback.updateDragFeedback('Left', el, now);
     } else {
       spatialFeedback.clearDrag('Left');
-      spatialFeedback.clearDrag('Right');
     }
 
     // Clear spatial state for hands that disappeared

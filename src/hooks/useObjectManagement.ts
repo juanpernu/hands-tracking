@@ -3,7 +3,7 @@ import type { DraggableObjectData, Position } from '../types';
 import { COLORS } from '../types';
 import { hitTest as aabbHitTest } from '../utils/geometry';
 import { objectsOverlap, resolveCollisions } from '../utils/collision';
-import { OBJECTS } from '../config';
+import { OBJECTS, SPATIAL } from '../config';
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -96,8 +96,32 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
       const updated = prev.map((obj) => {
         if (obj.id !== id) return obj;
         // Clamp to screen bounds
-        const x = Math.max(0, Math.min(position.x, window.innerWidth - obj.width));
-        const y = Math.max(0, Math.min(position.y, window.innerHeight - obj.height));
+        let x = Math.max(0, Math.min(position.x, window.innerWidth - obj.width));
+        let y = Math.max(0, Math.min(position.y, window.innerHeight - obj.height));
+
+        // Snap to nearby objects when within threshold
+        const snap = SPATIAL.SNAP_THRESHOLD;
+        for (const other of prev) {
+          if (other.id === id) continue;
+          // Snap left edge to left edge
+          if (Math.abs(x - other.x) < snap) x = other.x;
+          // Snap left edge to right edge
+          else if (Math.abs(x - (other.x + other.width)) < snap) x = other.x + other.width;
+          // Snap right edge to left edge
+          else if (Math.abs((x + obj.width) - other.x) < snap) x = other.x - obj.width;
+          // Snap right edge to right edge
+          else if (Math.abs((x + obj.width) - (other.x + other.width)) < snap) x = other.x + other.width - obj.width;
+
+          // Snap top edge to top edge
+          if (Math.abs(y - other.y) < snap) y = other.y;
+          // Snap top edge to bottom edge
+          else if (Math.abs(y - (other.y + other.height)) < snap) y = other.y + other.height;
+          // Snap bottom edge to top edge
+          else if (Math.abs((y + obj.height) - other.y) < snap) y = other.y - obj.height;
+          // Snap bottom edge to bottom edge
+          else if (Math.abs((y + obj.height) - (other.y + other.height)) < snap) y = other.y + other.height - obj.height;
+        }
+
         return { ...obj, x, y };
       });
       return resolveCollisions(updated, id, window.innerWidth, window.innerHeight);
