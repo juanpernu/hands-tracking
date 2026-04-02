@@ -65,6 +65,43 @@ describe('useContextBuffer', () => {
     expect(window[1].type).toBe('swipe-left');
   });
 
+  it('getSequence clamps when requesting more than buffer holds', () => {
+    const { result } = renderHook(() => useContextBuffer({ maxEvents: 50, maxMs: 10000 }));
+    act(() => {
+      result.current.push(makeEvent('clap', 1000));
+      result.current.push(makeEvent('shake', 2000));
+    });
+    expect(result.current.getSequence(100)).toHaveLength(2);
+  });
+
+  it('getWindow works on a full wrapped ring buffer', () => {
+    const { result } = renderHook(() => useContextBuffer({ maxEvents: 3, maxMs: 10000 }));
+    act(() => {
+      result.current.push(makeEvent('clap', 1000));
+      result.current.push(makeEvent('shake', 2000));
+      result.current.push(makeEvent('both-pinch', 3000));
+      result.current.push(makeEvent('both-spread', 4000)); // overwrites slot 0
+      result.current.push(makeEvent('pinch-start', 5000)); // overwrites slot 1
+    });
+    const window = result.current.getWindow(3000, 5500);
+    expect(window).toHaveLength(3);
+    expect(window[0].type).toBe('both-pinch');
+    expect(window[2].type).toBe('pinch-start');
+  });
+
+  it('push after clear returns only new events', () => {
+    const { result } = renderHook(() => useContextBuffer({ maxEvents: 50, maxMs: 10000 }));
+    act(() => {
+      result.current.push(makeEvent('clap', 1000));
+      result.current.push(makeEvent('shake', 2000));
+      result.current.clear();
+      result.current.push(makeEvent('both-pinch', 3000));
+    });
+    const seq = result.current.getSequence(10);
+    expect(seq).toHaveLength(1);
+    expect(seq[0].type).toBe('both-pinch');
+  });
+
   it('should clear the buffer', () => {
     const { result } = renderHook(() =>
       useContextBuffer({ maxEvents: 5, maxMs: 5000 })

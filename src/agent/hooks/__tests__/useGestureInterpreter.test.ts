@@ -87,6 +87,20 @@ describe('useGestureInterpreter', () => {
     });
   });
 
+  it('throws on malformed action string (no colon)', () => {
+    const { onAction, buffer, bridge } = makeMocks();
+    const badMappings: GestureMapping[] = [
+      { gesture: 'clap', action: 'nocolonhere' },
+    ];
+    const { result } = renderHook(() =>
+      useGestureInterpreter({ mappings: badMappings, buffer, bridge, onAction }),
+    );
+
+    expect(() => {
+      result.current.handle(makeEvent('clap'));
+    }).toThrow('Invalid action format');
+  });
+
   it('escalates to bridge when available and no mapping found', async () => {
     const { onAction, buffer, bridge } = makeMocks();
     bridge.isAvailable.mockReturnValue(true);

@@ -10,11 +10,13 @@ export function useContextBuffer(config: ContextBufferConfig) {
   const bufferRef = useRef<AgentGestureEvent[]>([]);
   const headRef = useRef(0);
   const sizeRef = useRef(0);
+  const capacityRef = useRef(0);
 
-  if (bufferRef.current.length !== config.maxEvents) {
+  if (capacityRef.current !== config.maxEvents) {
     bufferRef.current = new Array(config.maxEvents).fill(null);
     headRef.current = 0;
     sizeRef.current = 0;
+    capacityRef.current = config.maxEvents;
   }
 
   const push = useCallback((event: AgentGestureEvent) => {
@@ -48,6 +50,7 @@ export function useContextBuffer(config: ContextBufferConfig) {
   }, [config.maxEvents]);
 
   const clear = useCallback(() => {
+    bufferRef.current.fill(null as unknown as AgentGestureEvent);
     headRef.current = 0;
     sizeRef.current = 0;
   }, []);

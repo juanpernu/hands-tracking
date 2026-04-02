@@ -3,8 +3,10 @@ import type { Plugin, ActionDefinition } from '../types';
 
 export function usePluginRegistry(initialPlugins: Plugin[]) {
   const registryRef = useRef<Map<string, Plugin>>(new Map());
+  const initializedRef = useRef(false);
 
-  if (registryRef.current.size === 0 && initialPlugins.length > 0) {
+  if (!initializedRef.current && initialPlugins.length > 0) {
+    initializedRef.current = true;
     for (const plugin of initialPlugins) {
       registryRef.current.set(plugin.id, plugin);
     }
