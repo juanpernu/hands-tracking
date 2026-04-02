@@ -128,6 +128,7 @@ export default function App() {
 
   // --- Refs ---
   const cursorRef = useRef<HTMLDivElement>(null);
+  const leftCursorRef = useRef<HTMLDivElement>(null);
   const gripIndicatorRef = useRef<HTMLDivElement>(null);
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
 
@@ -150,6 +151,8 @@ export default function App() {
   HRef.current = H;
   const mouseGrabbingRef = useRef(mouseGrabbing);
   mouseGrabbingRef.current = mouseGrabbing;
+  const grabbedIdRef = useRef(grabbedId);
+  grabbedIdRef.current = grabbedId;
 
   // --- Main RAF interaction loop ---
   const rafCallbackRef = useRef<() => void>(() => {});
@@ -237,9 +240,10 @@ export default function App() {
     // Update rect cache (throttled internally to 10fps)
     spatialIndex.updateRects();
 
-    // Drag feedback — only when grabbing
-    if (grabbedId) {
-      const el = document.querySelector(`[data-object-id="${grabbedId}"]`);
+    // Drag feedback — only when grabbing (use ref to avoid stale closure)
+    const currentGrabbedId = grabbedIdRef.current;
+    if (currentGrabbedId) {
+      const el = document.querySelector(`[data-object-id="${currentGrabbedId}"]`);
       if (el) {
         spatialFeedback.updateDragFeedback(
           currentHands[0]?.handedness ?? 'Right',
@@ -247,6 +251,9 @@ export default function App() {
           now,
         );
       }
+    } else {
+      spatialFeedback.clearDrag('Left');
+      spatialFeedback.clearDrag('Right');
     }
 
     // Clear spatial state for hands that disappeared
@@ -258,12 +265,25 @@ export default function App() {
       handOverDOM.clearHand(present === 'Left' ? 'Right' : 'Left');
     }
 
-    // 6. Drive cursor imperatively
+    // 6. Drive cursors imperatively
     if (result && cursorRef.current) {
       cursorRef.current.style.transform = `translate3d(${result.cursorPixel.x}px, ${result.cursorPixel.y}px, 0)`;
     }
     if (result && gripIndicatorRef.current) {
       gripIndicatorRef.current.style.transform = `translate3d(${result.cursorPixel.x}px, ${result.cursorPixel.y}px, 0)`;
+    }
+
+    // Drive left hand cursor independently from landmarks
+    if (leftCursorRef.current) {
+      const leftHand = currentHands.find((h) => h.handedness === 'Left');
+      if (leftHand && leftHand.landmarks[8]) {
+        const lx = (1 - leftHand.landmarks[8].x) * currentW;
+        const ly = leftHand.landmarks[8].y * currentH;
+        leftCursorRef.current.style.transform = `translate3d(${lx}px, ${ly}px, 0)`;
+        leftCursorRef.current.style.display = 'block';
+      } else {
+        leftCursorRef.current.style.display = 'none';
+      }
     }
 
     // 7. Update timeline ring buffer
@@ -454,6 +474,25 @@ export default function App() {
         />
       ))}
       <HandCursor ref={cursorRef} gestureState={gestureState} />
+      {/* Left hand cursor — always visible when left hand detected */}
+      <div
+        ref={leftCursorRef}
+        style={{
+          display: 'none',
+          position: 'absolute',
+          width: 20,
+          height: 20,
+          background: 'rgba(255, 107, 107, 0.15)',
+          border: '2px solid #FF6B6B',
+          boxShadow: '0 0 6px rgba(255, 107, 107, 0.3)',
+          borderRadius: '50%',
+          pointerEvents: 'none',
+          zIndex: 1000,
+          marginLeft: -10,
+          marginTop: -10,
+          willChange: 'transform',
+        }}
+      />
       <GripIndicator
         ref={gripIndicatorRef}
         gripConfidence={primaryGrip ? primaryGrip.gripForce : 0}
