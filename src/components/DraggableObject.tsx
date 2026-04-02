@@ -33,6 +33,7 @@ function getStateStyles(
 }
 
 export const DraggableObject = React.memo(function DraggableObject({
+  id,
   x,
   y,
   width,
@@ -57,5 +58,5 @@ export const DraggableObject = React.memo(function DraggableObject({
     ...stateStyles,
   };
 
-  return <div style={style} />;
+  return <div data-object-id={id} style={style} />;
 });

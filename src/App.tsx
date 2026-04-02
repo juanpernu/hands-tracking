@@ -21,8 +21,12 @@ import { useInteractionController } from './hooks/useInteractionController';
 import { useTelemetryRecorder } from './hooks/useTelemetryRecorder';
 import { useTelemetryLogger } from './hooks/useTelemetryLogger';
 import { useBatchTelemetry } from './hooks/useBatchTelemetry';
+import { useDOMSpatialIndex } from './hooks/useDOMSpatialIndex';
+import { useHandOverDOM } from './hooks/useHandOverDOM';
+import { useSpatialFeedback } from './hooks/useSpatialFeedback';
 import { useWindowSize } from './hooks/useWindowSize';
 import { magnitude3 } from './utils/geometry';
+import type { SpatialEvent } from './types/spatial';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
 
@@ -88,6 +92,20 @@ export default function App() {
   const { record } = useTelemetryRecorder();
   const { log, processFrame, clearLog, exportLog } = useTelemetryLogger();
   const { record: recordBatch } = useBatchTelemetry();
+
+  // --- Spatial tracking hooks ---
+  const spatialIndex = useDOMSpatialIndex();
+  const handOverDOM = useHandOverDOM({ spatialIndex });
+  const spatialFeedback = useSpatialFeedback({ spatialIndex, handOverDOM });
+
+  // Wire spatial events into telemetry log
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const addSpatialLogEntry = useCallback((_event: SpatialEvent) => {
+    // Spatial events are available for future telemetry integration
+  }, []);
+
+  handOverDOM.onSpatialEvent.current = addSpatialLogEntry;
+  spatialFeedback.onFeedbackEvent.current = addSpatialLogEntry;
 
   // --- UI state ---
   const [telemetryVisible, setTelemetryVisible] = useState(true);
@@ -175,6 +193,53 @@ export default function App() {
       },
     );
 
+    // 5.5 Spatial tracking
+    if (result) {
+      const cursor = result.cursorPixel;
+      handOverDOM.updateHandPosition(
+        currentHands[0]?.handedness ?? 'Right',
+        cursor.x,
+        cursor.y,
+        now,
+      );
+
+      // If there's a second hand, track it too
+      if (currentHands.length > 1) {
+        const secondHand = currentHands[1];
+        const lm8 = secondHand.landmarks[8];
+        if (lm8) {
+          const sx = (1 - lm8.x) * currentW;
+          const sy = lm8.y * currentH;
+          handOverDOM.updateHandPosition(secondHand.handedness, sx, sy, now);
+        }
+      }
+
+      // Update rect cache (throttled internally to 10fps)
+      spatialIndex.updateRects();
+
+      // Drag feedback — only when grabbing
+      const grabbedObj = currentObjects.find((o) => o.id === grabbedId);
+      if (grabbedObj) {
+        const el = document.querySelector(`[data-object-id="${grabbedObj.id}"]`);
+        if (el) {
+          spatialFeedback.updateDragFeedback(
+            currentHands[0]?.handedness ?? 'Right',
+            el,
+            now,
+          );
+        }
+      }
+    }
+
+    // Clear spatial state for hands that disappeared
+    if (currentHands.length === 0) {
+      handOverDOM.clearHand('Left');
+      handOverDOM.clearHand('Right');
+    } else if (currentHands.length === 1) {
+      const present = currentHands[0].handedness;
+      handOverDOM.clearHand(present === 'Left' ? 'Right' : 'Left');
+    }
+
     // 6. Drive cursor imperatively
     if (result && cursorRef.current) {
       cursorRef.current.style.transform = `translate3d(${result.cursorPixel.x}px, ${result.cursorPixel.y}px, 0)`;
@@ -212,6 +277,10 @@ export default function App() {
     removeObject,
     moveObject,
     mousePosRef,
+    spatialIndex,
+    handOverDOM,
+    spatialFeedback,
+    grabbedId,
   ]);
 
   // Store latest runFrame in a ref so the RAF loop always calls the latest version
