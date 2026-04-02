@@ -73,6 +73,9 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
   // sessionId is stable for the lifetime of the component.
   const [sessionId] = useState(() => generateId());
 
+  // Offset to convert performance.now() → Unix ms (Date.now())
+  const perfToUnixRef = useRef(Date.now() - performance.now());
+
   const frameCounterRef = useRef(0);
   const sequenceRef = useRef(0);
   const [batchCount, setBatchCount] = useState(0);
@@ -136,11 +139,12 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
     // THEN send the new batch
     sequenceRef.current++;
     const seq = sequenceRef.current;
+    const offset = perfToUnixRef.current;
     const payload = JSON.stringify({
       sessionId: sessionIdRef.current,
       sequenceNum: seq,
-      startTime: buf.startTime,
-      endTime: buf.endTime,
+      startTime: Math.round(buf.startTime + offset),
+      endTime: Math.round(buf.endTime + offset),
       frames: buf.frames,
       events: buf.events,
     });
@@ -247,6 +251,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
       const sid = sessionIdRef.current;
 
       // Flush remaining frames in chunks that fit sendBeacon's 64KB limit
+      const offset = perfToUnixRef.current;
       if (buf.frames.length > 0) {
         for (let i = 0; i < buf.frames.length; i += BEACON_CHUNK_SIZE) {
           sequenceRef.current++;
@@ -254,8 +259,8 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
           const payload = new Blob([JSON.stringify({
             sessionId: sid,
             sequenceNum: sequenceRef.current,
-            startTime: chunk[0].timestamp,
-            endTime: chunk[chunk.length - 1].timestamp,
+            startTime: Math.round(chunk[0].timestamp + offset),
+            endTime: Math.round(chunk[chunk.length - 1].timestamp + offset),
             frames: chunk,
             events: i === 0 ? buf.events : [],
           })], { type: 'application/json' });
@@ -267,8 +272,8 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
       const durationSec = (stats.lastTimestamp - stats.firstTimestamp) / 1000;
       const summaryBlob = new Blob([JSON.stringify({
         sessionId: sid,
-        startTime: stats.firstTimestamp,
-        endTime: stats.lastTimestamp,
+        startTime: Math.round(stats.firstTimestamp + offset),
+        endTime: Math.round(stats.lastTimestamp + offset),
         totalFrames: stats.totalFrames,
         totalEvents: stats.totalEvents,
         totalBatches: sequenceRef.current,
