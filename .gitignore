@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Telemetry exports
+/telemetry/
+
+# Superpowers brainstorm sessions
+.superpowers/

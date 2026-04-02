@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import type { MutableRefObject } from 'react';
 import type { Position } from '../types';
 
-interface MouseFallbackState {
+interface UseMouseFallbackReturn {
+  /** Latest mouse position as normalized 0-1 coords — read from ref, no re-renders */
+  positionRef: MutableRefObject<Position>;
+  /** Legacy reactive position — only updated when isGrabbing changes to minimise renders.
+   *  For the RAF loop, prefer positionRef.current directly. */
   position: Position;
   isGrabbing: boolean;
-}
-
-interface UseMouseFallbackReturn extends MouseFallbackState {
   containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -14,12 +16,17 @@ interface UseMouseFallbackReturn extends MouseFallbackState {
  * Tracks mouse position (normalised to 0–1 relative to a container element)
  * and click state as a fallback when hand tracking is unavailable.
  *
- * Returned `position` values mirror the coordinate space used by MediaPipe
- * landmarks — x and y are each in the [0, 1] range.
+ * Position is stored in a ref (zero re-renders on mousemove).
+ * isGrabbing is still reactive state because it drives visual changes.
  */
 export function useMouseFallback(): UseMouseFallbackReturn {
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Position lives in a ref — the RAF loop reads it without triggering renders
+  const positionRef = useRef<Position>({ x: 0, y: 0 });
+
+  // Expose a reactive copy only so legacy consumers (e.g. snapshot in App) still work.
+  // We update it lazily — only on grab state transitions to avoid unnecessary renders.
   const [position, setPosition] = useState<Position>({ x: 0, y: 0 });
   const [isGrabbing, setIsGrabbing] = useState(false);
 
@@ -28,15 +35,16 @@ export function useMouseFallback(): UseMouseFallbackReturn {
     if (!container) return;
 
     const rect = container.getBoundingClientRect();
-
-    // Clamp to [0, 1] so consumers always receive in-bounds values.
     const x = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
 
-    setPosition({ x, y });
+    // Update ref every frame — zero re-renders
+    positionRef.current = { x, y };
   }, []);
 
   const handleMouseDown = useCallback(() => {
+    // Sync reactive position on grab start so the initial grab point is correct
+    setPosition({ ...positionRef.current });
     setIsGrabbing(true);
   }, []);
 
@@ -44,7 +52,6 @@ export function useMouseFallback(): UseMouseFallbackReturn {
     setIsGrabbing(false);
   }, []);
 
-  // Also release grab if the pointer leaves the window while held down.
   const handleMouseLeave = useCallback(() => {
     setIsGrabbing(false);
   }, []);
@@ -66,5 +73,5 @@ export function useMouseFallback(): UseMouseFallbackReturn {
     };
   }, [handleMouseMove, handleMouseDown, handleMouseUp, handleMouseLeave]);
 
-  return { position, isGrabbing, containerRef };
+  return { positionRef, position, isGrabbing, containerRef };
 }

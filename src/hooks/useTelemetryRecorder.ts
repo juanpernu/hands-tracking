@@ -187,7 +187,10 @@ export function useTelemetryRecorder(capacity: number = DEFAULT_CAPACITY): Telem
 
       // Only trigger a re-render when there are new discrete events.
       if (newEvents.length > 0) {
-        setGestureEvents((prev) => [...prev, ...newEvents]);
+        setGestureEvents((prev) => {
+          const next = [...prev, ...newEvents];
+          return next.length > 1000 ? next.slice(-1000) : next;
+        });
       }
     },
     // capacity is stable — only changes if the consumer passes a different value,

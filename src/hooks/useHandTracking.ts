@@ -84,11 +84,8 @@ export function useHandTracking(): UseHandTrackingReturn {
         });
       } catch (err) {
         if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? `Camera access denied: ${err.message}`
-              : 'Camera access denied.'
-          );
+          console.error('Camera access error:', err);
+          setError('Camera access denied. Please allow camera permissions and reload.');
         }
         return;
       }
@@ -137,11 +134,8 @@ export function useHandTracking(): UseHandTrackingReturn {
         });
       } catch (err) {
         if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? `MediaPipe init failed: ${err.message}`
-              : 'MediaPipe initialisation failed.'
-          );
+          console.error('MediaPipe initialization error:', err);
+          setError('Hand tracking failed to initialize. Please reload the page.');
         }
         stream.getTracks().forEach((t) => t.stop());
         return;
@@ -161,10 +155,9 @@ export function useHandTracking(): UseHandTrackingReturn {
     }
 
     initialize().catch((err) => {
+      console.error('Hand tracking initialization error:', err);
       if (!cancelled) {
-        setError(
-          err instanceof Error ? err.message : 'Unknown initialisation error.'
-        );
+        setError('Hand tracking failed to start. Please reload the page.');
       }
     });
 

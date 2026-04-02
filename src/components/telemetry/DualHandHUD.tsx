@@ -1,4 +1,5 @@
 import { magnitude3 } from '../../utils/geometry';
+import { gripColor } from '../../utils/colors';
 import type { HandPhysics, GripState, MotionPattern } from '../../types/telemetry';
 
 interface DualHandHUDProps {
@@ -6,12 +7,6 @@ interface DualHandHUDProps {
   gripData: GripState[];
   motionData: MotionPattern[];
   fps: number;
-}
-
-function gripColor(force: number): string {
-  if (force < 0.3) return '#27C93F';
-  if (force < 0.7) return '#FFBD2E';
-  return '#FF5F56';
 }
 
 function velocityColor(speed: number): string {

@@ -1,4 +1,5 @@
 import React from 'react';
+import { gripColor } from '../../utils/colors';
 
 interface GripIndicatorProps {
   gripConfidence: number; // 0-1
@@ -7,12 +8,6 @@ interface GripIndicatorProps {
 
 const RADIUS = 22;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS; // ~138.2
-
-function gripColor(confidence: number): string {
-  if (confidence < 0.3) return '#27C93F';
-  if (confidence < 0.7) return '#FFBD2E';
-  return '#FF5F56';
-}
 
 const GripIndicator = React.forwardRef<HTMLDivElement, GripIndicatorProps>(
   ({ gripConfidence, visible }, ref) => {

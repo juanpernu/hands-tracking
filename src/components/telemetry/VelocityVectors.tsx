@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react';
 import type { HandData } from '../../types';
 import type { HandPhysics } from '../../types/telemetry';
+import { speedToColor } from '../../utils/colors';
 
 interface VelocityVectorsProps {
   hands: HandData[];
@@ -13,13 +14,6 @@ const FINGERTIP_INDICES = [4, 8, 12, 16, 20];
 const MAX_ARROW_LENGTH = 60;
 const ARROWHEAD_BASE = 8;
 const ARROWHEAD_DEPTH = 12;
-
-function speedToColor(speed: number): string {
-  if (speed < 2) return '#4A90D9';
-  if (speed < 8) return '#27C93F';
-  if (speed < 20) return '#FFBD2E';
-  return '#FF5F56';
-}
 
 function drawArrow(
   ctx: CanvasRenderingContext2D,
