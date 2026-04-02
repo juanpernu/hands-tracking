@@ -17,6 +17,7 @@ const LERP_FACTOR = 0.3;
 export interface GestureResult {
   primaryCursor: { x: number; y: number } | null;
   isPinching: boolean;
+  isLeftPinching: boolean;
   isBothPinching: boolean;
   isBothSpreading: boolean;
 }
@@ -43,6 +44,7 @@ export function useGestureDetection() {
       return {
         primaryCursor: null,
         isPinching: false,
+        isLeftPinching: false,
         isBothPinching: false,
         isBothSpreading: false,
       };
@@ -92,6 +94,7 @@ export function useGestureDetection() {
 
     const primaryHandedness = primaryHand.handedness;
     const primaryPinchState = pinchStateRef.current[primaryHandedness] ?? false;
+    const leftPinchState = pinchStateRef.current['Left'] ?? false;
 
     const isBothPinching =
       hands.length >= 2 && pinchResults.every((r) => r.isPinching);
@@ -102,6 +105,7 @@ export function useGestureDetection() {
     return {
       primaryCursor: { ...smoothCursorRef.current },
       isPinching: primaryPinchState,
+      isLeftPinching: leftPinchState,
       isBothPinching,
       isBothSpreading,
     };

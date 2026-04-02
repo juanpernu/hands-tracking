@@ -178,6 +178,7 @@ export function useInteractionController() {
     // --- Determine cursor position and gesture flags ---
     let cursorPixel: { x: number; y: number };
     let isPinching: boolean;
+    let isLeftPinching: boolean;
     let isBothPinching: boolean;
     let isBothSpreading: boolean;
 
@@ -185,11 +186,13 @@ export function useInteractionController() {
       if (!gesture.primaryCursor) return null;
       cursorPixel = normalizedToPixel(gesture.primaryCursor, W, H);
       isPinching = gesture.isPinching;
+      isLeftPinching = gesture.isLeftPinching;
       isBothPinching = gesture.isBothPinching;
       isBothSpreading = gesture.isBothSpreading;
     } else {
       cursorPixel = normalizedToPixel(mousePos, W, H);
       isPinching = mouseGrabbing;
+      isLeftPinching = false;
       isBothPinching = false;
       isBothSpreading = false;
     }
@@ -212,8 +215,72 @@ export function useInteractionController() {
       if (grabbedIdLeftRef.current === hovered) applyGrabbedIdLeft(null);
       newGestureState = 'deleting';
     } else if (bothPinchingRising) {
-      addObject(cursorPixel);
-      newGestureState = 'creating';
+      // Check if either hand is over an object — if so, grab with both hands instead of creating
+      let rightHovered = hovered; // primary cursor already did hitTest
+      let leftHovered: string | null = null;
+      const leftHand = hands.find((h) => h.handedness === 'Left');
+      if (leftHand) {
+        const leftCursor = normalizedToPixel(
+          { x: leftHand.landmarks[8].x, y: leftHand.landmarks[8].y },
+          W,
+          H,
+        );
+        leftHovered = hitTest(leftCursor);
+
+        if (leftHovered) {
+          const obj = objects.find((o) => o.id === leftHovered);
+          if (obj) {
+            grabOffsetLeftRef.current = { x: leftCursor.x - obj.x, y: leftCursor.y - obj.y };
+            applyGrabbedIdLeft(leftHovered);
+          }
+        }
+      }
+
+      if (rightHovered) {
+        const obj = objects.find((o) => o.id === rightHovered);
+        if (obj) {
+          grabOffsetRef.current = { x: cursorPixel.x - obj.x, y: cursorPixel.y - obj.y };
+          applyGrabbedId(rightHovered);
+        }
+      }
+
+      if (rightHovered || leftHovered) {
+        newGestureState = 'grabbing';
+      } else {
+        addObject(cursorPixel);
+        newGestureState = 'creating';
+      }
+    } else if (isBothPinching) {
+      // Sustain dual-hand grab — move objects while both hands keep pinching
+      const currentGrabbedId = grabbedIdRef.current;
+      if (currentGrabbedId) {
+        const obj = objects.find((o) => o.id === currentGrabbedId);
+        if (obj) {
+          moveObject(currentGrabbedId, {
+            x: cursorPixel.x - grabOffsetRef.current.x,
+            y: cursorPixel.y - grabOffsetRef.current.y,
+          });
+        }
+      }
+      const currentGrabbedIdLeft = grabbedIdLeftRef.current;
+      if (currentGrabbedIdLeft) {
+        const leftHand = hands.find((h) => h.handedness === 'Left');
+        if (leftHand) {
+          const leftCursor = normalizedToPixel(
+            { x: leftHand.landmarks[8].x, y: leftHand.landmarks[8].y },
+            W,
+            H,
+          );
+          const obj = objects.find((o) => o.id === currentGrabbedIdLeft);
+          if (obj) {
+            moveObject(currentGrabbedIdLeft, {
+              x: leftCursor.x - grabOffsetLeftRef.current.x,
+              y: leftCursor.y - grabOffsetLeftRef.current.y,
+            });
+          }
+        }
+      }
+      newGestureState = (currentGrabbedId || currentGrabbedIdLeft) ? 'grabbing' : 'idle';
     } else if (isPinching) {
       const currentGrabbedId = grabbedIdRef.current;
       if (currentGrabbedId) {
@@ -240,8 +307,8 @@ export function useInteractionController() {
       newGestureState = hovered ? 'hovering' : 'idle';
     }
 
-    // --- Left hand grab (partial low grip) ---
-    if (useHands && partialLowGrabLeftRef.current) {
+    // --- Left hand grab (pinch or partial low grip) ---
+    if (useHands && (isLeftPinching || partialLowGrabLeftRef.current)) {
       const leftHand = hands.find((h) => h.handedness === 'Left');
       if (leftHand) {
         const leftCursor = normalizedToPixel(
@@ -292,7 +359,7 @@ export function useInteractionController() {
     now: number,
   ) => {
     if (
-      hands.length >= 2 &&
+      hands.length >= 1 &&
       physicsData.length > 0 &&
       now - shakeHistoryRef.current.lastClearTime > SHAKE_CLEAR_DEBOUNCE_MS
     ) {
