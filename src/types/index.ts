@@ -34,7 +34,3 @@ export const COLORS = [
   '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F',
 ] as const;
 
-export const WORKSPACE = {
-  width: 1200,
-  height: 800,
-} as const;

@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+
+const DEBOUNCE_MS = 150;
 
 export function useWindowSize() {
   const [size, setSize] = useState({
@@ -6,12 +8,21 @@ export function useWindowSize() {
     height: window.innerHeight,
   });
 
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     const onResize = () => {
-      setSize({ width: window.innerWidth, height: window.innerHeight });
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        setSize({ width: window.innerWidth, height: window.innerHeight });
+      }, DEBOUNCE_MS);
     };
+
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    };
   }, []);
 
   return size;

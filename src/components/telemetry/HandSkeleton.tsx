@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react';
 import type { HandData } from '../../types';
 import type { HandPhysics } from '../../types/telemetry';
+import { speedToColor } from '../../utils/colors';
 
 interface HandSkeletonProps {
   hands: HandData[];
@@ -24,13 +25,6 @@ const BONE_CONNECTIONS: [number, number][] = [
   // Palm cross
   [5, 9], [9, 13], [13, 17],
 ];
-
-function speedToColor(speed: number): string {
-  if (speed < 2) return '#4A90D9';
-  if (speed < 8) return '#27C93F';
-  if (speed < 20) return '#FFBD2E';
-  return '#FF5F56';
-}
 
 export function HandSkeleton({
   hands,
