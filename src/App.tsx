@@ -78,7 +78,7 @@ export default function App() {
   const { objects, addObject, removeObject, moveObject, hitTest } = useObjectManagement(0);
 
   // --- Analysis + interaction hooks ---
-  const { physicsData, gripData, motionData, computeFrame } = useHandAnalysis();
+  const { physicsData, gripData, motionData, gripRef, computeFrame } = useHandAnalysis();
   const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake } =
     useInteractionController();
 
@@ -238,8 +238,9 @@ export default function App() {
 
   // Hand cursors for draggable panels — stable as long as hands/gripData don't change
   const panelHandCursors = useMemo(() => {
+    const liveGrip = gripRef.current;
     return hands.map((hand) => {
-      const grip = gripData.find((g) => g.handedness === hand.handedness);
+      const grip = liveGrip.find((g) => g.handedness === hand.handedness);
       const isPinching =
         hand.landmarks[4] && hand.landmarks[8]
           ? Math.hypot(
@@ -252,7 +253,9 @@ export default function App() {
       const py = hand.landmarks[8].y * H;
       return { x: px, y: py, isGrabbing: isPinching || isPartialLow };
     });
-  }, [hands, gripData, W, H]);
+    // gripRef is a ref (stable identity) — reads live data without being a dep
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hands, W, H]);
 
   // Border style based on edge warning
   const borderStyle = useMemo((): CSSProperties => {

@@ -30,7 +30,8 @@ export interface UseHandAnalysisReturn {
   physicsData: HandPhysics[];
   gripData: GripState[];
   motionData: MotionPattern[];
-  /** Imperative getter for RAF loop — reads from refs, no re-render */
+  /** Live grip ref — updated every frame, for latency-sensitive consumers like panel drag */
+  gripRef: React.RefObject<GripState[]>;
   /** Call this every frame from the RAF loop */
   computeFrame: (hands: HandData[], timestamp: number) => HandAnalysisData;
 }
@@ -81,6 +82,7 @@ export function useHandAnalysis(): UseHandAnalysisReturn {
     physicsData: uiPhysics,
     gripData: uiGrip,
     motionData: uiMotion,
+    gripRef,
     computeFrame,
   };
 }

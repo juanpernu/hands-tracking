@@ -63,19 +63,16 @@ describe('computeFingerCurl', () => {
     expect(curl).toBe(0);
   });
 
-  it('returns 0 when PIP and MCP are at the same position (zero-length bone)', () => {
+  it('returns 0.5 when PIP and MCP are at the same position (zero-length bone)', () => {
     const landmarks = makeLandmarks({
       6: { x: 0, y: 0, z: 0 },  // MCP same as PIP
       7: { x: 0, y: 0, z: 0 },  // PIP
       8: { x: 1, y: 0, z: 0 },  // TIP
     });
-    // normalize3 of zero vector returns (0,0,0), dot = 0, angle = PI/2
-    // curl = 1 - (PI/2)/PI = 0.5 ... BUT sub3 gives zero, normalize3 gives zero
-    // dot = 0, acos(0) = PI/2, curl = 0.5
+    // normalize3 of zero vector returns (0,0,0), dot3 = 0, acos(0) = PI/2
+    // curl = 1 - (PI/2)/PI = 0.5
     const curl = computeFingerCurl(landmarks, 6, 7, 8);
-    // With zero-length bone1, dot3 = 0, angle = PI/2, curl = 0.5
-    expect(curl).toBeGreaterThanOrEqual(0);
-    expect(curl).toBeLessThanOrEqual(1);
+    expect(curl).toBeCloseTo(0.5, 1);
   });
 });
 
@@ -105,16 +102,14 @@ describe('classifyGrip', () => {
     expect(classifyGrip(curls, landmarks)).toBe('pinch');
   });
 
-  it('returns "partial" when pinch conditions met but tips are far apart', () => {
+  it('returns "point" when thumb+index extended but tips far apart (fails pinch, matches point)', () => {
     const curls: [number, number, number, number, number] = [0.1, 0.1, 0.8, 0.8, 0.8];
-    // thumb tip (4) and index tip (8) far apart
+    // thumb tip (4) and index tip (8) far apart — fails pinch distance check
     const landmarks = makeLandmarks({
       4: { x: 0, y: 0, z: 0 },
       8: { x: 1, y: 1, z: 0 },
     });
-    // Falls through pinch check (distance > 0.05), also not "point" because
-    // thumb curl (0.1) doesn't matter for point, but index < 0.3 and others > 0.6
-    // Actually this matches 'point': indexCurl < 0.3, middleCurl > 0.6, ringCurl > 0.6, pinkyCurl > 0.6
+    // Pinch fails (distance > 0.05). Point matches: indexCurl < 0.3, middle/ring/pinky > 0.6
     expect(classifyGrip(curls, landmarks)).toBe('point');
   });
 
@@ -143,9 +138,11 @@ describe('classifyGrip', () => {
     expect(classifyGrip(curls, landmarks)).toBe('open');
   });
 
-  it('does not return "fist" when one finger is exactly 0.7 (not > 0.7)', () => {
+  it('returns "partial" when thumb is exactly 0.7 (not > 0.7, fails fist threshold)', () => {
     const curls: [number, number, number, number, number] = [0.7, 0.8, 0.8, 0.8, 0.8];
     const landmarks = makeLandmarks();
-    expect(classifyGrip(curls, landmarks)).not.toBe('fist');
+    // Thumb 0.7 is not > 0.7, so fist fails. Not open (all > 0.3). Not pinch (curls too high).
+    // Not point (index 0.8 is not < 0.3). Falls through to partial.
+    expect(classifyGrip(curls, landmarks)).toBe('partial');
   });
 });

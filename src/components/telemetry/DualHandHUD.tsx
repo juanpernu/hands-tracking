@@ -103,8 +103,10 @@ export function DualHandHUD({ physicsData, gripData, motionData, fps }: DualHand
   const rightPhysics = physicsData.find((p) => p.handedness === 'Right');
   const leftGrip = gripData.find((g) => g.handedness === 'Left');
   const rightGrip = gripData.find((g) => g.handedness === 'Right');
-  const leftMotion = motionData[physicsData.findIndex((p) => p.handedness === 'Left')];
-  const rightMotion = motionData[physicsData.findIndex((p) => p.handedness === 'Right')];
+  const leftMotionIdx = physicsData.findIndex((p) => p.handedness === 'Left');
+  const rightMotionIdx = physicsData.findIndex((p) => p.handedness === 'Right');
+  const leftMotion = leftMotionIdx >= 0 ? motionData[leftMotionIdx] : undefined;
+  const rightMotion = rightMotionIdx >= 0 ? motionData[rightMotionIdx] : undefined;
 
   return (
     <div style={containerStyle}>
