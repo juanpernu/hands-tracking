@@ -14,6 +14,8 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import type { GestureResult } from './useGestureDetection';
 import type { HandData, GestureState, DraggableObjectData } from '../types';
 import type { GripState } from '../types/telemetry';
+import type { MotionPattern } from '../types/telemetry';
+import type { AgentGestureEvent, AgentGestureType } from '../agent/types';
 import { normalizedToPixel, magnitude3 } from '../utils/geometry';
 import { INTERACTION } from '../config';
 
@@ -42,7 +44,11 @@ export interface UpdateInput {
   H: number;
 }
 
-export function useInteractionController() {
+interface InteractionControllerConfig {
+  onGestureEvent?: (event: AgentGestureEvent) => void;
+}
+
+export function useInteractionController(config?: InteractionControllerConfig) {
   // --- Reactive output state (only updates on meaningful transitions) ---
   const [gestureState, setGestureState] = useState<GestureState>('idle');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -76,6 +82,20 @@ export function useInteractionController() {
   });
   const shakeClearingRef = useRef(false);
   const shakeTimeoutIdsRef = useRef<number[]>([]);
+
+  // --- Swipe detection (rising-edge + debounce) ---
+  const prevSwipeActiveRef = useRef(false);
+  const lastSwipeEmitTimeRef = useRef(0);
+
+  // --- Gesture event callback ---
+  const onGestureEventRef = useRef(config?.onGestureEvent);
+  onGestureEventRef.current = config?.onGestureEvent;
+
+  const emitGesture = useCallback((type: AgentGestureType, hands: HandData[]) => {
+    const cb = onGestureEventRef.current;
+    if (!cb) return;
+    cb({ type, hands, timestamp: performance.now() });
+  }, []);
 
   // Helper: set grabbed id with ref sync
   const applyGrabbedId = useCallback((id: string | null) => {
@@ -209,6 +229,7 @@ export function useInteractionController() {
       removeObject(hovered);
       if (grabbedIdRef.current === hovered) applyGrabbedId(null);
       if (grabbedIdLeftRef.current === hovered) applyGrabbedIdLeft(null);
+      emitGesture('both-spread', hands);
       newGestureState = 'deleting';
     } else if (bothPinchingRising) {
       // Check if either hand is over an object — if so, grab with both hands instead of creating
@@ -241,9 +262,15 @@ export function useInteractionController() {
       }
 
       if (rightHovered || leftHovered) {
+        // Dual-grab: both hands pinch over existing objects — move them.
+        // Intentionally does NOT emit 'both-pinch' here. The 'both-pinch' event
+        // maps to 'dom.tabs:open-tab' (object creation), which must only fire
+        // when no existing objects are under either cursor.
         newGestureState = 'grabbing';
       } else {
+        // No objects under either cursor — create a new object and emit event
         addObject(cursorPixel);
+        emitGesture('both-pinch', hands);
         newGestureState = 'creating';
       }
     } else if (isBothPinching) {
@@ -295,11 +322,15 @@ export function useInteractionController() {
         if (obj) {
           grabOffsetRef.current = { x: cursorPixel.x - obj.x, y: cursorPixel.y - obj.y };
           applyGrabbedId(hovered);
+          emitGesture('pinch-start', hands);
           newGestureState = 'grabbing';
         }
       }
     } else {
-      if (grabbedIdRef.current) applyGrabbedId(null);
+      if (grabbedIdRef.current) {
+        emitGesture('pinch-release', hands);
+        applyGrabbedId(null);
+      }
       newGestureState = hovered ? 'hovering' : 'idle';
     }
 
@@ -341,7 +372,7 @@ export function useInteractionController() {
     applyGestureState(newGestureState);
 
     return { cursorPixel, resolvedGestureState: newGestureState };
-  }, [applyGestureState, applyGrabbedId, applyGrabbedIdLeft, applyHoveredId, applyEdgeWarning]);
+  }, [applyGestureState, applyGrabbedId, applyGrabbedIdLeft, applyHoveredId, applyEdgeWarning, emitGesture]);
 
   /**
    * Shake-to-clear update — separated so it can receive physics data.
@@ -377,6 +408,7 @@ export function useInteractionController() {
         }
 
         if (reversals >= INTERACTION.SHAKE_CLEAR_REVERSALS && objects.length > 0 && !shakeClearingRef.current) {
+          emitGesture('shake', hands);
           shakeClearingRef.current = true;
           shakeHistoryRef.current.lastClearTime = now;
           shakeHistoryRef.current.directions = [];
@@ -395,7 +427,37 @@ export function useInteractionController() {
         if (shakeHistoryRef.current.directions.length > 0) shakeHistoryRef.current.directions.pop();
       }
     }
-  }, []);
+  }, [emitGesture]);
+
+  /**
+   * Swipe detection — receives motion patterns from useHandAnalysis.
+   * Uses rising-edge detection + debounce to emit exactly once per swipe gesture.
+   * Call once per frame after updateShake().
+   */
+  const updateMotion = useCallback((
+    motionData: MotionPattern[],
+    hands: HandData[],
+  ) => {
+    const now = performance.now();
+    const swipePattern = motionData.find(
+      (m) => m.type === 'swipe' && m.confidence > 0.5 && m.swipeDirection,
+    );
+
+    const isSwipeActive = !!swipePattern;
+
+    // Rising-edge: only emit when transitioning from no-swipe to swipe
+    if (isSwipeActive && !prevSwipeActiveRef.current) {
+      // Debounce: prevent rapid re-triggering
+      if (now - lastSwipeEmitTimeRef.current > INTERACTION.SWIPE_DEBOUNCE_MS) {
+        const direction = swipePattern!.swipeDirection!;
+        const gestureType: AgentGestureType = `swipe-${direction}`;
+        emitGesture(gestureType, hands);
+        lastSwipeEmitTimeRef.current = now;
+      }
+    }
+
+    prevSwipeActiveRef.current = isSwipeActive;
+  }, [emitGesture]);
 
   // Cleanup shake timeouts on unmount
   useEffect(() => {
@@ -414,5 +476,6 @@ export function useInteractionController() {
     // Imperative updates called from RAF
     update,
     updateShake,
+    updateMotion,
   };
 }

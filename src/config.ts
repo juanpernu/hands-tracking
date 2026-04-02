@@ -76,6 +76,7 @@ export const INTERACTION = {
   SHAKE_HISTORY_SIZE: 15,
   PARTIAL_GRAB_ENTER: 0.65,
   PARTIAL_GRAB_EXIT: 0.8,
+  SWIPE_DEBOUNCE_MS: 1000,
 } as const;
 
 // --- Object Management ---

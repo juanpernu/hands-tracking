@@ -29,6 +29,22 @@ import { useHandOverDOM } from './hooks/useHandOverDOM';
 import { useSpatialFeedback } from './hooks/useSpatialFeedback';
 import { useWindowSize } from './hooks/useWindowSize';
 import { magnitude3 } from './utils/geometry';
+import { usePluginRegistry } from './plugins/hooks/usePluginRegistry';
+import { useActionDispatcher } from './plugins/hooks/useActionDispatcher';
+import { useAgentBridge } from './agent/hooks/useAgentBridge';
+import { useContextBuffer } from './agent/hooks/useContextBuffer';
+import { useGestureInterpreter } from './agent/hooks/useGestureInterpreter';
+import { useActionToast, ActionToastDisplay } from './components/ActionToast';
+import {
+  fullscreenPlugin,
+  navigationPlugin,
+  tabsPlugin,
+  clipboardPlugin,
+  speechPlugin,
+  notificationsPlugin,
+} from './plugins/built-in';
+import type { GestureMapping } from './agent/types';
+import type { ActionIntent } from './plugins/types';
 import type { SpatialEvent, SpatialTelemetryData } from './types/spatial';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
@@ -73,6 +89,15 @@ function readTimeline(buf: TimelineRingBuffer, cutoff: number): TimelineEntry[] 
 const MemoEventLog = memo(EventLog);
 const MemoDualHandHUD = memo(DualHandHUD);
 
+const defaultMappings: GestureMapping[] = [
+  { gesture: 'clap', action: 'browser.fullscreen:toggle' },
+  { gesture: 'shake', action: 'dom.navigation:go-back' },
+  { gesture: 'swipe-left', action: 'dom.navigation:go-back' },
+  { gesture: 'swipe-right', action: 'dom.navigation:go-forward' },
+  { gesture: 'both-spread', action: 'dom.tabs:close-tab' },
+  { gesture: 'both-pinch', action: 'dom.tabs:open-tab' },
+];
+
 // ---- App ---------------------------------------------------------------------
 
 export default function App() {
@@ -86,10 +111,8 @@ export default function App() {
   const { positionRef: mousePosRef, isGrabbing: mouseGrabbing, containerRef } = useMouseFallback();
   const { objects, addObject, removeObject, moveObject, hitTest } = useObjectManagement(0);
 
-  // --- Analysis + interaction hooks ---
+  // --- Analysis hooks ---
   const { physicsData, gripData, motionData, gripRef, computeFrame } = useHandAnalysis();
-  const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake } =
-    useInteractionController();
 
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
@@ -121,6 +144,33 @@ export default function App() {
     handOverDOM.onSpatialEvent.current = addSpatialLogEntry;
     spatialFeedback.onFeedbackEvent.current = addSpatialLogEntry;
   }, [addSpatialLogEntry, handOverDOM, spatialFeedback]);
+
+  // --- Agent + Plugin hooks (must be declared before interpreter) ---
+  const registry = usePluginRegistry([
+    fullscreenPlugin, navigationPlugin, tabsPlugin,
+    clipboardPlugin, speechPlugin, notificationsPlugin,
+  ]);
+  const dispatcher = useActionDispatcher(registry);
+  const bridge = useAgentBridge({ enabled: false });
+  const contextBuffer = useContextBuffer({ maxEvents: 50, maxMs: 10000 });
+  const { toasts, addToast } = useActionToast();
+
+  const handleAction = useCallback(async (intent: ActionIntent) => {
+    const result = await dispatcher.dispatch(intent);
+    addToast(intent.action, `${intent.plugin}:${intent.action}`, result);
+    return result;
+  }, [dispatcher, addToast]);
+
+  const interpreter = useGestureInterpreter({
+    mappings: defaultMappings,
+    buffer: contextBuffer,
+    bridge,
+    onAction: handleAction,
+  });
+
+  // --- Interaction controller (depends on interpreter.handle) ---
+  const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake, updateMotion } =
+    useInteractionController({ onGestureEvent: interpreter.handle });
 
   // --- UI state ---
   const [telemetryVisible, setTelemetryVisible] = useState(true);
@@ -209,8 +259,9 @@ export default function App() {
     recordBatch(currentHands, physics, grips, motions, now, spatialMap);
     processFrame(currentHands, physics, grips, motions, now);
 
-    // 3. Shake-to-clear
+    // 3. Shake-to-clear + swipe detection
     updateShake(currentHands, physics, currentObjects, removeObject, now);
+    updateMotion(motions, currentHands);
 
     // 4. Detect gesture
     const gesture = detectGesture(currentHands);
@@ -330,6 +381,7 @@ export default function App() {
     recordBatch,
     processFrame,
     updateShake,
+    updateMotion,
     detectGesture,
     update,
     hitTest,
@@ -412,8 +464,12 @@ export default function App() {
   }, [edgeWarning]);
 
   // Clap → screenshot via canvas capture
+  // INVARIANT: Clap is detected exclusively by useTelemetryLogger (external audio/heuristic),
+  // NOT by useInteractionController. The controller must NEVER emit 'clap' to avoid double-dispatch,
+  // since this handler already calls interpreter.handle for clap events.
   useEffect(() => {
     onClapRef.current = () => {
+      interpreter.handle({ type: 'clap', hands: handsRef.current, timestamp: performance.now() });
       setFlashActive(true);
       setTimeout(() => setFlashActive(false), 200);
 
@@ -459,7 +515,7 @@ export default function App() {
       link.href = canvas.toDataURL('image/png');
       link.click();
     };
-  }, [onClapRef, containerRef]);
+  }, [onClapRef, containerRef, interpreter.handle]);
 
   const primaryGrip = gripData[0];
 
@@ -613,6 +669,8 @@ export default function App() {
           </DraggablePanel>
         </>
       )}
+
+      <ActionToastDisplay toasts={toasts} />
     </div>
   );
 }
