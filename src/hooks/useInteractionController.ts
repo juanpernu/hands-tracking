@@ -10,7 +10,7 @@
  *    hovered/grabbed id changes, edge warning changes) — not every frame.
  */
 
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import type { GestureResult } from './useGestureDetection';
 import type { HandData, GestureState, DraggableObjectData } from '../types';
 import type { GripState } from '../types/telemetry';
@@ -69,12 +69,17 @@ export function useInteractionController() {
   const partialLowGrabLeftRef = useRef(false);
   const partialLowGrabRightRef = useRef(false);
 
+  // --- Rising-edge detection for both-pinch / both-spread ---
+  const prevBothPinchingRef = useRef(false);
+  const prevBothSpreadingRef = useRef(false);
+
   // --- Shake-to-clear ---
   const shakeHistoryRef = useRef<{ directions: number[]; lastClearTime: number }>({
     directions: [],
     lastClearTime: 0,
   });
   const shakeClearingRef = useRef(false);
+  const shakeTimeoutIdsRef = useRef<number[]>([]);
 
   // Helper: set grabbed id with ref sync
   const applyGrabbedId = useCallback((id: string | null) => {
@@ -192,23 +197,36 @@ export function useInteractionController() {
     const hovered = hitTest(cursorPixel);
     applyHoveredId(hovered);
 
+    // --- Rising-edge detection ---
+    const bothSpreadingRising = isBothSpreading && !prevBothSpreadingRef.current;
+    const bothPinchingRising = isBothPinching && !prevBothPinchingRef.current;
+    prevBothSpreadingRef.current = isBothSpreading;
+    prevBothPinchingRef.current = isBothPinching;
+
     // --- Gesture-to-action mapping ---
     let newGestureState: GestureState = 'idle';
 
-    if (isBothSpreading && hovered) {
+    if (bothSpreadingRising && hovered) {
       removeObject(hovered);
+      if (grabbedIdRef.current === hovered) applyGrabbedId(null);
+      if (grabbedIdLeftRef.current === hovered) applyGrabbedIdLeft(null);
       newGestureState = 'deleting';
-    } else if (isBothPinching) {
+    } else if (bothPinchingRising) {
       addObject(cursorPixel);
       newGestureState = 'creating';
     } else if (isPinching) {
       const currentGrabbedId = grabbedIdRef.current;
       if (currentGrabbedId) {
-        moveObject(currentGrabbedId, {
-          x: cursorPixel.x - grabOffsetRef.current.x,
-          y: cursorPixel.y - grabOffsetRef.current.y,
-        });
-        newGestureState = 'grabbing';
+        const obj = objects.find((o) => o.id === currentGrabbedId);
+        if (obj) {
+          moveObject(currentGrabbedId, {
+            x: cursorPixel.x - grabOffsetRef.current.x,
+            y: cursorPixel.y - grabOffsetRef.current.y,
+          });
+          newGestureState = 'grabbing';
+        } else {
+          applyGrabbedId(null);
+        }
       } else if (hovered) {
         const obj = objects.find((o) => o.id === hovered);
         if (obj) {
@@ -233,10 +251,15 @@ export function useInteractionController() {
         );
         const currentGrabbedIdLeft = grabbedIdLeftRef.current;
         if (currentGrabbedIdLeft) {
-          moveObject(currentGrabbedIdLeft, {
-            x: leftCursor.x - grabOffsetLeftRef.current.x,
-            y: leftCursor.y - grabOffsetLeftRef.current.y,
-          });
+          const obj = objects.find((o) => o.id === currentGrabbedIdLeft);
+          if (obj) {
+            moveObject(currentGrabbedIdLeft, {
+              x: leftCursor.x - grabOffsetLeftRef.current.x,
+              y: leftCursor.y - grabOffsetLeftRef.current.y,
+            });
+          } else {
+            applyGrabbedIdLeft(null);
+          }
         } else {
           const leftHovered = hitTest(leftCursor);
           if (leftHovered && leftHovered !== grabbedIdRef.current) {
@@ -294,18 +317,28 @@ export function useInteractionController() {
           shakeClearingRef.current = true;
           shakeHistoryRef.current.lastClearTime = now;
           shakeHistoryRef.current.directions = [];
+          shakeTimeoutIdsRef.current.forEach((tid) => clearTimeout(tid));
+          shakeTimeoutIdsRef.current = [];
           const ids = objects.map((o) => o.id);
           ids.forEach((id, i) => {
-            setTimeout(() => {
+            const tid = window.setTimeout(() => {
               removeObject(id);
               if (i === ids.length - 1) shakeClearingRef.current = false;
             }, i * 150);
+            shakeTimeoutIdsRef.current.push(tid);
           });
         }
       } else {
         if (shakeHistoryRef.current.directions.length > 0) shakeHistoryRef.current.directions.pop();
       }
     }
+  }, []);
+
+  // Cleanup shake timeouts on unmount
+  useEffect(() => {
+    return () => {
+      shakeTimeoutIdsRef.current.forEach((tid) => clearTimeout(tid));
+    };
   }, []);
 
   return {

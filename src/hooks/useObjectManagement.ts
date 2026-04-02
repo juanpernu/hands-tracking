@@ -12,10 +12,17 @@ function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
 function createObject(position: Position): DraggableObjectData {
   const color = COLORS[randomInt(0, COLORS.length - 1)];
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     x: position.x,
     y: position.y,
     width: OBJECT_SIZE,

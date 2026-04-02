@@ -135,12 +135,20 @@ export function DraggablePanel({
       }
 
       if (activeHandIndexRef.current !== null) {
-        const activeCursor = cursors[activeHandIndexRef.current];
-        if (activeCursor?.isGrabbing) {
-          setClampedPosition(
-            activeCursor.x - dragOffsetRef.current.x,
-            activeCursor.y - dragOffsetRef.current.y,
-          );
+        if (activeHandIndexRef.current >= cursors.length) {
+          activeHandIndexRef.current = null;
+          setIsDragging(false);
+        } else {
+          const activeCursor = cursors[activeHandIndexRef.current];
+          if (activeCursor?.isGrabbing) {
+            setClampedPosition(
+              activeCursor.x - dragOffsetRef.current.x,
+              activeCursor.y - dragOffsetRef.current.y,
+            );
+          } else {
+            activeHandIndexRef.current = null;
+            setIsDragging(false);
+          }
         }
       }
 
