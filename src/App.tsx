@@ -90,7 +90,7 @@ export default function App() {
 
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
-  const { log, processFrame, addEntry, clearLog, exportLog } = useTelemetryLogger();
+  const { log, processFrame, addEntry, clearLog, exportLog, onClapRef } = useTelemetryLogger();
   const { record: recordBatch } = useBatchTelemetry();
 
   // --- Spatial tracking hooks ---
@@ -116,6 +116,7 @@ export default function App() {
   // --- UI state ---
   const [telemetryVisible, setTelemetryVisible] = useState(true);
   const [fps, setFps] = useState(0);
+  const [flashActive, setFlashActive] = useState(false);
 
   // --- Refs ---
   const cursorRef = useRef<HTMLDivElement>(null);
@@ -373,6 +374,56 @@ export default function App() {
     };
   }, [edgeWarning]);
 
+  // Clap → screenshot via canvas capture
+  useEffect(() => {
+    onClapRef.current = () => {
+      setFlashActive(true);
+      setTimeout(() => setFlashActive(false), 200);
+
+      const el = containerRef.current;
+      if (!el) return;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Copy all visible canvases (skeleton, vectors, timeline)
+      const canvases = el.querySelectorAll('canvas');
+      canvases.forEach((c) => {
+        const rect = c.getBoundingClientRect();
+        try { ctx.drawImage(c, rect.left, rect.top); } catch { /* cross-origin */ }
+      });
+
+      // Copy camera video if visible
+      const video = el.querySelector('video');
+      if (video) {
+        const rect = video.getBoundingClientRect();
+        try { ctx.drawImage(video, rect.left, rect.top, rect.width, rect.height); } catch { /* */ }
+      }
+
+      // Draw colored squares
+      const squares = el.querySelectorAll('[style*="border-radius: 8px"][style*="background-color"]');
+      squares.forEach((sq) => {
+        const style = (sq as HTMLElement).style;
+        const rect = (sq as HTMLElement).getBoundingClientRect();
+        ctx.fillStyle = style.backgroundColor;
+        ctx.beginPath();
+        ctx.roundRect(rect.left, rect.top, rect.width, rect.height, 8);
+        ctx.fill();
+      });
+
+      const link = document.createElement('a');
+      link.download = `clap-screenshot-${Date.now()}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    };
+  }, [onClapRef, containerRef]);
+
   const primaryGrip = gripData[0];
 
   return (
@@ -389,6 +440,14 @@ export default function App() {
         transition: edgeWarning === 'near' ? 'none' : 'border-color 300ms ease, box-shadow 300ms ease',
       }}
     >
+      {/* Screenshot flash */}
+      {flashActive && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'white',
+          opacity: 0.8, zIndex: 9999, pointerEvents: 'none',
+        }} />
+      )}
+
       {/* Objects + cursor */}
       {objects.map((obj) => (
         <DraggableObject
