@@ -48,7 +48,7 @@ export function SpatialHighlight({ handSpatialRef, visible }: SpatialHighlightPr
 
     if (!container || !tag) return;
 
-    if (!state || !state.isOverInteractive || !state.hoverTarget) {
+    if (!state || !state.hoverTarget) {
       container.style.display = 'none';
       return;
     }

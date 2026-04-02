@@ -223,41 +223,29 @@ export default function App() {
       },
     );
 
-    // 5.5 Spatial tracking
-    if (result) {
-      const cursor = result.cursorPixel;
-      handOverDOM.updateHandPosition(
-        currentHands[0]?.handedness ?? 'Right',
-        cursor.x,
-        cursor.y,
-        now,
-      );
-
-      // If there's a second hand, track it too
-      if (currentHands.length > 1) {
-        const secondHand = currentHands[1];
-        const lm8 = secondHand.landmarks[8];
-        if (lm8) {
-          const sx = (1 - lm8.x) * currentW;
-          const sy = lm8.y * currentH;
-          handOverDOM.updateHandPosition(secondHand.handedness, sx, sy, now);
-        }
+    // 5.5 Spatial tracking — runs independently of interaction result
+    // Track each hand's position over DOM elements
+    for (const hand of currentHands) {
+      const lm8 = hand.landmarks[8];
+      if (lm8) {
+        const px = (1 - lm8.x) * currentW;
+        const py = lm8.y * currentH;
+        handOverDOM.updateHandPosition(hand.handedness, px, py, now);
       }
+    }
 
-      // Update rect cache (throttled internally to 10fps)
-      spatialIndex.updateRects();
+    // Update rect cache (throttled internally to 10fps)
+    spatialIndex.updateRects();
 
-      // Drag feedback — only when grabbing
-      const grabbedObj = currentObjects.find((o) => o.id === grabbedId);
-      if (grabbedObj) {
-        const el = document.querySelector(`[data-object-id="${grabbedObj.id}"]`);
-        if (el) {
-          spatialFeedback.updateDragFeedback(
-            currentHands[0]?.handedness ?? 'Right',
-            el,
-            now,
-          );
-        }
+    // Drag feedback — only when grabbing
+    if (grabbedId) {
+      const el = document.querySelector(`[data-object-id="${grabbedId}"]`);
+      if (el) {
+        spatialFeedback.updateDragFeedback(
+          currentHands[0]?.handedness ?? 'Right',
+          el,
+          now,
+        );
       }
     }
 
