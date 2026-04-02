@@ -13,7 +13,7 @@ function getStateStyles(
   if (isGrabbed) {
     return {
       transform: 'scale(1.05)',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+      boxShadow: '0 0 0 3px rgba(74, 144, 217, 0.8), 0 0 16px rgba(74, 144, 217, 0.4), 0 4px 16px rgba(0,0,0,0.3)',
       zIndex: 1,
     };
   }

@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
+import type { PanelCollisionManager } from '../hooks/usePanelCollisions';
 
 interface HandCursorInput {
   x: number;
@@ -8,47 +9,52 @@ interface HandCursorInput {
 
 interface DraggablePanelProps {
   children: React.ReactNode;
+  id: string;
   initialX: number;
   initialY: number;
   handCursors?: HandCursorInput[];
-}
-
-function clampPosition(
-  x: number,
-  y: number,
-  panelWidth: number,
-  panelHeight: number,
-): { x: number; y: number } {
-  const maxX = window.innerWidth - panelWidth;
-  const maxY = window.innerHeight - panelHeight;
-  return {
-    x: Math.max(0, Math.min(x, maxX)),
-    y: Math.max(0, Math.min(y, maxY)),
-  };
+  collisionManager?: PanelCollisionManager;
 }
 
 export function DraggablePanel({
   children,
+  id,
   initialX,
   initialY,
   handCursors = [],
+  collisionManager,
 }: DraggablePanelProps) {
-  const [position, setPosition] = useState(() =>
-    clampPosition(initialX, initialY, 320, 240),
-  );
+  const [position, setPosition] = useState({ x: initialX, y: initialY });
   const [isDragging, setIsDragging] = useState(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
   const activeHandIndexRef = useRef<number | null>(null);
   const wasGrabbingRef = useRef<boolean[]>([]);
+  const dragStartTimeRef = useRef(0);
+  const MAX_DRAG_MS = 5000; // auto-release after 5 seconds
 
-  // Helper to set position with clamping
-  const setClampedPosition = useCallback((x: number, y: number) => {
+  // Register with collision manager
+  useEffect(() => {
     const el = panelRef.current;
-    const w = el?.offsetWidth ?? 320;
-    const h = el?.offsetHeight ?? 240;
-    setPosition(clampPosition(x, y, w, h));
-  }, []);
+    if (!el || !collisionManager) return;
+    collisionManager.register(id, el);
+    return () => collisionManager.unregister(id);
+  }, [id, collisionManager]);
+
+  // Move with collision resolution
+  const moveTo = useCallback((x: number, y: number) => {
+    if (collisionManager) {
+      const resolved = collisionManager.updatePosition(id, x, y);
+      setPosition(resolved);
+    } else {
+      const w = panelRef.current?.offsetWidth ?? 320;
+      const h = panelRef.current?.offsetHeight ?? 240;
+      setPosition({
+        x: Math.max(0, Math.min(x, window.innerWidth - w)),
+        y: Math.max(0, Math.min(y, window.innerHeight - h)),
+      });
+    }
+  }, [id, collisionManager]);
 
   // Mouse drag
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -65,10 +71,7 @@ export function DraggablePanel({
     if (!isDragging || activeHandIndexRef.current !== null) return;
 
     const handleMouseMove = (e: MouseEvent) => {
-      setClampedPosition(
-        e.clientX - dragOffsetRef.current.x,
-        e.clientY - dragOffsetRef.current.y,
-      );
+      moveTo(e.clientX - dragOffsetRef.current.x, e.clientY - dragOffsetRef.current.y);
     };
     const handleMouseUp = () => setIsDragging(false);
 
@@ -78,7 +81,7 @@ export function DraggablePanel({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, setClampedPosition]);
+  }, [isDragging, moveTo]);
 
   // Hand cursor drag
   useEffect(() => {
@@ -100,6 +103,7 @@ export function DraggablePanel({
         ) {
           activeHandIndexRef.current = i;
           setIsDragging(true);
+          dragStartTimeRef.current = performance.now();
           dragOffsetRef.current = {
             x: cursor.x - position.x,
             y: cursor.y - position.y,
@@ -114,17 +118,20 @@ export function DraggablePanel({
     }
 
     if (activeHandIndexRef.current !== null) {
-      const activeCursor = handCursors[activeHandIndexRef.current];
-      if (activeCursor?.isGrabbing) {
-        setClampedPosition(
-          activeCursor.x - dragOffsetRef.current.x,
-          activeCursor.y - dragOffsetRef.current.y,
-        );
+      // Auto-release safety: prevent stuck drag
+      if (performance.now() - dragStartTimeRef.current > MAX_DRAG_MS) {
+        activeHandIndexRef.current = null;
+        setIsDragging(false);
+      } else {
+        const activeCursor = handCursors[activeHandIndexRef.current];
+        if (activeCursor?.isGrabbing) {
+          moveTo(activeCursor.x - dragOffsetRef.current.x, activeCursor.y - dragOffsetRef.current.y);
+        }
       }
     }
 
     wasGrabbingRef.current = handCursors.map((c) => c.isGrabbing);
-  }, [handCursors, position, setClampedPosition]);
+  }, [handCursors, position, moveTo]);
 
   return (
     <div

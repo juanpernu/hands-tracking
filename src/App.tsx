@@ -19,7 +19,10 @@ import { useGripDetection } from './hooks/useGripDetection';
 import { useMotionRecognition } from './hooks/useMotionRecognition';
 import { useTelemetryRecorder } from './hooks/useTelemetryRecorder';
 import { useTelemetryLogger } from './hooks/useTelemetryLogger';
+import { useBatchTelemetry } from './hooks/useBatchTelemetry';
 import { useWindowSize } from './hooks/useWindowSize';
+import { usePanelCollisions } from './hooks/usePanelCollisions';
+import { useObjectTracker } from './hooks/useObjectTracker';
 import { normalizedToPixel, magnitude3 } from './utils/geometry';
 import type { GestureState } from './types';
 import type { HandPhysics as HandPhysicsType, GripState, MotionPattern } from './types/telemetry';
@@ -29,6 +32,7 @@ const EDGE_THRESHOLD = 0.08;
 
 export default function App() {
   const windowSize = useWindowSize();
+  const panelCollisions = usePanelCollisions();
 
   // --- Core hooks ---
   const { hands, isReady, error, videoRef } = useHandTracking();
@@ -36,12 +40,16 @@ export default function App() {
   const { position: mousePos, isGrabbing: mouseGrabbing, containerRef } = useMouseFallback();
   const { objects, addObject, removeObject, moveObject, hitTest, clearAll } = useObjectManagement(0);
 
+  // --- Object tracking ---
+  const objectTracker = useObjectTracker();
+
   // --- Telemetry hooks ---
   const computePhysics = useHandPhysics();
   const detectGrip = useGripDetection();
   const classifyMotion = useMotionRecognition();
   const { record } = useTelemetryRecorder();
-  const { log, processFrame, clearLog, exportLog } = useTelemetryLogger();
+  const { log, processFrame, addEntry: addLogEntry, clearLog, exportLog, onClapRef } = useTelemetryLogger();
+  const { record: recordBatch } = useBatchTelemetry({ maxFrames: 500, maxIntervalMs: 10_000, enabled: true });
 
   // --- Refs & state ---
   const cursorRef = useRef<HTMLDivElement>(null);
@@ -152,7 +160,8 @@ export default function App() {
 
     // Record + log
     record(hands, physics, grips, motions, now);
-    processFrame(physics, grips, motions, now);
+    recordBatch(hands, physics, grips, motions, now);
+    processFrame(hands, physics, grips, motions, now);
 
     // --- Shake-to-clear: only when TWO hands ---
     if (hands.length >= 2 && physics.length > 0 && now - shakeHistoryRef.current.lastClearTime > SHAKE_CLEAR_DEBOUNCE_MS) {
@@ -248,26 +257,39 @@ export default function App() {
       newGestureState = hovered ? 'hovering' : 'idle';
     }
 
-    // Left hand grab
-    if (useHands && partialLowGrabLeft) {
+    // Left hand grab — responds to pinch OR partial grip
+    if (useHands) {
       const leftHand = hands.find((h) => h.handedness === 'Left');
       if (leftHand) {
-        const leftCursor = normalizedToPixel({ x: leftHand.landmarks[8].x, y: leftHand.landmarks[8].y }, W, H);
-        if (grabbedIdLeft) {
-          moveObject(grabbedIdLeft, {
-            x: leftCursor.x - grabOffsetLeftRef.current.x,
-            y: leftCursor.y - grabOffsetLeftRef.current.y,
-          });
-        } else {
-          const leftHovered = hitTest(leftCursor);
-          if (leftHovered && leftHovered !== grabbedId) {
-            const obj = objects.find((o) => o.id === leftHovered);
-            if (obj) {
-              grabOffsetLeftRef.current = { x: leftCursor.x - obj.x, y: leftCursor.y - obj.y };
-              setGrabbedIdLeft(leftHovered);
+        const leftPinchDist = Math.hypot(
+          leftHand.landmarks[4].x - leftHand.landmarks[8].x,
+          leftHand.landmarks[4].y - leftHand.landmarks[8].y,
+        );
+        const leftIsPinching = leftPinchDist < 0.07;
+        const leftIsGrabbing = leftIsPinching || partialLowGrabLeft;
+
+        if (leftIsGrabbing) {
+          const leftCursor = normalizedToPixel({ x: leftHand.landmarks[8].x, y: leftHand.landmarks[8].y }, W, H);
+          if (grabbedIdLeft) {
+            moveObject(grabbedIdLeft, {
+              x: leftCursor.x - grabOffsetLeftRef.current.x,
+              y: leftCursor.y - grabOffsetLeftRef.current.y,
+            });
+          } else {
+            const leftHovered = hitTest(leftCursor);
+            if (leftHovered && leftHovered !== grabbedId) {
+              const obj = objects.find((o) => o.id === leftHovered);
+              if (obj) {
+                grabOffsetLeftRef.current = { x: leftCursor.x - obj.x, y: leftCursor.y - obj.y };
+                setGrabbedIdLeft(leftHovered);
+              }
             }
           }
+        } else {
+          if (grabbedIdLeft) setGrabbedIdLeft(null);
         }
+      } else {
+        if (grabbedIdLeft) setGrabbedIdLeft(null);
       }
     } else {
       if (grabbedIdLeft) setGrabbedIdLeft(null);
@@ -275,13 +297,44 @@ export default function App() {
 
     setGestureState(newGestureState);
 
+    // --- Track DOM object movement ---
+    const trackedObjects = objectTracker.update(objects, grabbedId, grabbedIdLeft);
+    for (const t of trackedObjects) {
+      const hand = t.grabbedBy === 'mouse' ? 'Right' as const : (t.grabbedBy ?? 'Right' as const);
+
+      // Grab start: just grabbed and hasn't moved yet
+      if (t.isGrabbed && t.grabStartTime > 0 && t.totalDistance < 1) {
+        addLogEntry({
+          timestamp: now,
+          type: 'object-grab',
+          handedness: hand,
+          description: `${hand} grabbed ${t.type} at (${t.x.toFixed(0)}, ${t.y.toFixed(0)})`,
+          data: { palmPosition: { x: t.x, y: t.y, z: 0 } },
+        });
+      }
+
+      // Release: totalDistance goes negative on the frame it's released
+      if (t.totalDistance < 0) {
+        const movedPx = Math.abs(t.totalDistance);
+        addLogEntry({
+          timestamp: now,
+          type: 'object-release',
+          handedness: hand,
+          description: `Released ${t.type} at (${t.x.toFixed(0)}, ${t.y.toFixed(0)}) — moved ${movedPx.toFixed(0)}px`,
+          data: { velocity: t.speed, palmPosition: { x: t.x, y: t.y, z: 0 } },
+        });
+        // Reset so it only fires once
+        t.totalDistance = 0;
+      }
+    }
+
     setTimelineEntries((prev) => {
       const entry = { timestamp: now, gesture: newGestureState, velocity: primarySpeed };
       const cutoff = now - 5000;
       const filtered = prev.length > 300 ? prev.slice(-200) : prev;
       return [...filtered.filter((e) => e.timestamp > cutoff), entry];
     });
-  }, [useHands, hands, detectGesture, mousePos, mouseGrabbing, hitTest, grabbedId, grabbedIdLeft, partialLowGrabLeft, partialLowGrabRight, objects, addObject, removeObject, moveObject, computePhysics, detectGrip, classifyMotion, record, processFrame, clearAll, W, H, isReady]);
+  }, [useHands, hands, detectGesture, mousePos, mouseGrabbing, hitTest, grabbedId, grabbedIdLeft, partialLowGrabLeft, partialLowGrabRight, objects, addObject, removeObject, moveObject, computePhysics, detectGrip, classifyMotion, record, recordBatch, processFrame, addLogEntry, objectTracker, clearAll, W, H, isReady]);
 
   useEffect(() => {
     updateInteraction();
@@ -300,15 +353,75 @@ export default function App() {
     URL.revokeObjectURL(url);
   }, [exportLog]);
 
-  // Hand cursors for draggable panels
+  // Screenshot state for flash effect
+  const [flashActive, setFlashActive] = useState(false);
+
+  // Clap → screenshot via canvas capture
+  useEffect(() => {
+    onClapRef.current = () => {
+      setFlashActive(true);
+      setTimeout(() => setFlashActive(false), 200);
+
+      // Capture all canvases + draw DOM snapshot
+      const el = containerRef.current;
+      if (!el) return;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // White background
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Copy all visible canvases (skeleton, vectors, timeline)
+      const canvases = el.querySelectorAll('canvas');
+      canvases.forEach((c) => {
+        const rect = c.getBoundingClientRect();
+        try { ctx.drawImage(c, rect.left, rect.top); } catch { /* cross-origin */ }
+      });
+
+      // Copy camera video if visible
+      const video = el.querySelector('video');
+      if (video) {
+        const rect = video.getBoundingClientRect();
+        try { ctx.drawImage(video, rect.left, rect.top, rect.width, rect.height); } catch { /* */ }
+      }
+
+      // Draw colored squares
+      const squares = el.querySelectorAll('[style*="border-radius: 8px"][style*="background-color"]');
+      squares.forEach((sq) => {
+        const style = (sq as HTMLElement).style;
+        const rect = (sq as HTMLElement).getBoundingClientRect();
+        ctx.fillStyle = style.backgroundColor;
+        ctx.beginPath();
+        ctx.roundRect(rect.left, rect.top, rect.width, rect.height, 8);
+        ctx.fill();
+      });
+
+      const link = document.createElement('a');
+      link.download = `clap-screenshot-${Date.now()}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    };
+  }, [onClapRef, containerRef]);
+
+  // Hand cursors for draggable panels — pinch with hysteresis
+  const panelPinchStateRef = useRef<Record<string, boolean>>({});
   const panelHandCursors = hands.map((hand) => {
-    const grip = gripData.find((g) => g.handedness === hand.handedness);
-    const isPinching = hand.landmarks[4] && hand.landmarks[8]
-      ? Math.hypot(hand.landmarks[4].x - hand.landmarks[8].x, hand.landmarks[4].y - hand.landmarks[8].y) < 0.07
-      : false;
-    const isPartialLow = grip ? grip.opennessRatio < 0.65 : false;
+    const dist = hand.landmarks[4] && hand.landmarks[8]
+      ? Math.hypot(hand.landmarks[4].x - hand.landmarks[8].x, hand.landmarks[4].y - hand.landmarks[8].y)
+      : 1;
+    const key = hand.handedness;
+    const wasPinching = panelPinchStateRef.current[key] ?? false;
+    // Enter at < 0.04, exit at > 0.08 (wide hysteresis)
+    const isPinching = wasPinching ? dist < 0.08 : dist < 0.04;
+    panelPinchStateRef.current[key] = isPinching;
+
     const pixel = normalizedToPixel({ x: hand.landmarks[8].x, y: hand.landmarks[8].y }, W, H);
-    return { x: pixel.x, y: pixel.y, isGrabbing: isPinching || isPartialLow };
+    return { x: pixel.x, y: pixel.y, isGrabbing: isPinching };
   });
 
   // Edge border style
@@ -340,6 +453,15 @@ export default function App() {
           50% { border-color: transparent; box-shadow: none; }
         }
       `}</style>
+
+      {/* Flash effect on clap */}
+      {flashActive && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'white', opacity: 0.8,
+          pointerEvents: 'none',
+        }} />
+      )}
 
       <div
         ref={containerRef}
@@ -417,20 +539,22 @@ export default function App() {
         )}
         {/* Panels — same depth as cubes */}
         <DraggablePanel
+          id="camera"
           initialX={W - 340}
           initialY={H - 290}
           handCursors={panelHandCursors}
+          collisionManager={panelCollisions}
         >
           <CameraPreview videoRef={videoRef} visible={true} />
         </DraggablePanel>
 
         {telemetryVisible && (
           <>
-            <DraggablePanel initialX={W - 340} initialY={20} handCursors={panelHandCursors}>
+            <DraggablePanel id="eventlog" initialX={W - 360} initialY={20} handCursors={panelHandCursors} collisionManager={panelCollisions}>
               <EventLog entries={log} onClear={clearLog} onExport={handleExport} />
             </DraggablePanel>
 
-            <DraggablePanel initialX={20} initialY={20} handCursors={panelHandCursors}>
+            <DraggablePanel id="hud" initialX={20} initialY={20} handCursors={panelHandCursors} collisionManager={panelCollisions}>
               <DualHandHUD physicsData={physicsData} gripData={gripData} motionData={motionData} fps={fps} />
             </DraggablePanel>
           </>
