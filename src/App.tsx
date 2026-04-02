@@ -4,6 +4,7 @@ import { DraggableObject } from './components/DraggableObject';
 import HandCursor from './components/HandCursor';
 import CameraPreview from './components/CameraPreview';
 import { DraggablePanel } from './components/DraggablePanel';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { TelemetryOverlay } from './components/telemetry/TelemetryOverlay';
 import { HandSkeleton } from './components/telemetry/HandSkeleton';
 import { VelocityVectors } from './components/telemetry/VelocityVectors';
@@ -11,6 +12,9 @@ import { DualHandHUD } from './components/telemetry/DualHandHUD';
 import { GestureTimeline } from './components/telemetry/GestureTimeline';
 import { EventLog } from './components/telemetry/EventLog';
 import GripIndicator from './components/telemetry/GripIndicator';
+import { SpatialHighlight } from './components/SpatialHighlight';
+import { SpatialProximityFeedback } from './components/SpatialProximityFeedback';
+import { SpatialHUD } from './components/telemetry/SpatialHUD';
 import { useHandTracking } from './hooks/useHandTracking';
 import { useGestureDetection } from './hooks/useGestureDetection';
 import { useMouseFallback } from './hooks/useMouseFallback';
@@ -20,6 +24,9 @@ import { useInteractionController } from './hooks/useInteractionController';
 import { useTelemetryRecorder } from './hooks/useTelemetryRecorder';
 import { useTelemetryLogger } from './hooks/useTelemetryLogger';
 import { useBatchTelemetry } from './hooks/useBatchTelemetry';
+import { useDOMSpatialIndex } from './hooks/useDOMSpatialIndex';
+import { useHandOverDOM } from './hooks/useHandOverDOM';
+import { useSpatialFeedback } from './hooks/useSpatialFeedback';
 import { useWindowSize } from './hooks/useWindowSize';
 import { magnitude3 } from './utils/geometry';
 import { usePluginRegistry } from './plugins/hooks/usePluginRegistry';
@@ -38,6 +45,7 @@ import {
 } from './plugins/built-in';
 import type { GestureMapping } from './agent/types';
 import type { ActionIntent } from './plugins/types';
+import type { SpatialEvent, SpatialTelemetryData } from './types/spatial';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
 
@@ -108,8 +116,34 @@ export default function App() {
 
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
-  const { log, processFrame, clearLog, exportLog, onClapRef } = useTelemetryLogger();
+  const { log, processFrame, addEntry, clearLog, exportLog, onClapRef } = useTelemetryLogger();
   const { record: recordBatch } = useBatchTelemetry();
+
+  // --- Spatial tracking hooks ---
+  const spatialIndex = useDOMSpatialIndex();
+  const handOverDOM = useHandOverDOM({ spatialIndex });
+  const spatialFeedback = useSpatialFeedback({ spatialIndex });
+
+  // Wire spatial events into telemetry log
+  const addSpatialLogEntry = useCallback((event: SpatialEvent) => {
+    addEntry({
+      type: event.type,
+      timestamp: event.timestamp,
+      description: event.target
+        ? `${event.type} → ${event.target}`
+        : event.type,
+      data: event.detail,
+    });
+    setSpatialEventLog((prev) => {
+      const next = [...prev, event];
+      return next.length > 20 ? next.slice(-20) : next;
+    });
+  }, [addEntry]);
+
+  useEffect(() => {
+    handOverDOM.onSpatialEvent.current = addSpatialLogEntry;
+    spatialFeedback.onFeedbackEvent.current = addSpatialLogEntry;
+  }, [addSpatialLogEntry, handOverDOM, spatialFeedback]);
 
   // --- Agent + Plugin hooks (must be declared before interpreter) ---
   const registry = usePluginRegistry([
@@ -142,9 +176,12 @@ export default function App() {
   const [telemetryVisible, setTelemetryVisible] = useState(true);
   const [fps, setFps] = useState(0);
   const [flashActive, setFlashActive] = useState(false);
+  const [spatialEventLog, setSpatialEventLog] = useState<SpatialEvent[]>([]);
 
   // --- Refs ---
   const cursorRef = useRef<HTMLDivElement>(null);
+  const leftCursorRef = useRef<HTMLDivElement>(null);
+  const leftCursorSmoothed = useRef({ x: 0, y: 0, initialized: false });
   const gripIndicatorRef = useRef<HTMLDivElement>(null);
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
 
@@ -167,6 +204,10 @@ export default function App() {
   HRef.current = H;
   const mouseGrabbingRef = useRef(mouseGrabbing);
   mouseGrabbingRef.current = mouseGrabbing;
+  const grabbedIdRef = useRef(grabbedId);
+  grabbedIdRef.current = grabbedId;
+  const grabbedIdLeftRef = useRef(grabbedIdLeft);
+  grabbedIdLeftRef.current = grabbedIdLeft;
 
   // --- Main RAF interaction loop ---
   const rafCallbackRef = useRef<() => void>(() => {});
@@ -194,9 +235,28 @@ export default function App() {
       now,
     );
 
-    // 2. Record telemetry
-    record(currentHands, physics, grips, motions, now);
-    recordBatch(currentHands, physics, grips, motions, now);
+    // 2. Build spatial telemetry data from hand-over-DOM state
+    const spatialMap = new Map<string, SpatialTelemetryData>();
+    const spatialState = handOverDOM.handSpatialRef.current;
+    const handEntries: Array<['Left' | 'Right', typeof spatialState.left]> = [
+      ['Left', spatialState.left],
+      ['Right', spatialState.right],
+    ];
+    for (const [handedness, state] of handEntries) {
+      if (state?.stack) {
+        spatialMap.set(handedness, {
+          topElement: state.hoverTarget?.selector ?? null,
+          topElementScore: state.hoverTarget?.relevanceScore ?? 0,
+          isOverInteractive: state.isOverInteractive,
+          hoverDurationMs: state.hoverDurationMs,
+          elementCount: state.stack.elements.length,
+        });
+      }
+    }
+
+    // Record telemetry
+    record(currentHands, physics, grips, motions, now, spatialMap);
+    recordBatch(currentHands, physics, grips, motions, now, spatialMap);
     processFrame(currentHands, physics, grips, motions, now);
 
     // 3. Shake-to-clear + swipe detection
@@ -226,12 +286,77 @@ export default function App() {
       },
     );
 
-    // 6. Drive cursor imperatively
+    // 5.5 Spatial tracking — runs independently of interaction result
+    // Track each hand's position over DOM elements
+    for (const hand of currentHands) {
+      const lm8 = hand.landmarks[8];
+      if (lm8) {
+        const px = (1 - lm8.x) * currentW;
+        const py = lm8.y * currentH;
+        handOverDOM.updateHandPosition(hand.handedness, px, py, now);
+      }
+    }
+
+    // Update rect cache (throttled internally to 10fps)
+    spatialIndex.updateRects();
+
+    // Drag feedback — for both hands independently
+    const currentGrabbedRight = grabbedIdRef.current;
+    const currentGrabbedLeft = grabbedIdLeftRef.current;
+
+    if (currentGrabbedRight) {
+      const el = document.querySelector(`[data-object-id="${currentGrabbedRight}"]`);
+      if (el) spatialFeedback.updateDragFeedback('Right', el, now);
+    } else {
+      spatialFeedback.clearDrag('Right');
+    }
+
+    if (currentGrabbedLeft) {
+      const el = document.querySelector(`[data-object-id="${currentGrabbedLeft}"]`);
+      if (el) spatialFeedback.updateDragFeedback('Left', el, now);
+    } else {
+      spatialFeedback.clearDrag('Left');
+    }
+
+    // Clear spatial state for hands that disappeared
+    if (currentHands.length === 0) {
+      handOverDOM.clearHand('Left');
+      handOverDOM.clearHand('Right');
+    } else if (currentHands.length === 1) {
+      const present = currentHands[0].handedness;
+      handOverDOM.clearHand(present === 'Left' ? 'Right' : 'Left');
+    }
+
+    // 6. Drive cursors imperatively
     if (result && cursorRef.current) {
       cursorRef.current.style.transform = `translate3d(${result.cursorPixel.x}px, ${result.cursorPixel.y}px, 0)`;
     }
     if (result && gripIndicatorRef.current) {
       gripIndicatorRef.current.style.transform = `translate3d(${result.cursorPixel.x}px, ${result.cursorPixel.y}px, 0)`;
+    }
+
+    // Drive left hand cursor with lerp smoothing (same as right hand)
+    if (leftCursorRef.current) {
+      const leftHand = currentHands.find((h) => h.handedness === 'Left');
+      if (leftHand && leftHand.landmarks[8]) {
+        const rawX = (1 - leftHand.landmarks[8].x) * currentW;
+        const rawY = leftHand.landmarks[8].y * currentH;
+        const s = leftCursorSmoothed.current;
+        if (!s.initialized) {
+          s.x = rawX;
+          s.y = rawY;
+          s.initialized = true;
+        } else {
+          const f = 0.3; // same lerp factor as useGestureDetection
+          s.x += (rawX - s.x) * f;
+          s.y += (rawY - s.y) * f;
+        }
+        leftCursorRef.current.style.transform = `translate3d(${s.x}px, ${s.y}px, 0)`;
+        leftCursorRef.current.style.display = 'block';
+      } else {
+        leftCursorRef.current.style.display = 'none';
+        leftCursorSmoothed.current.initialized = false;
+      }
     }
 
     // 7. Update timeline ring buffer
@@ -264,6 +389,9 @@ export default function App() {
     removeObject,
     moveObject,
     mousePosRef,
+    spatialIndex,
+    handOverDOM,
+    spatialFeedback,
   ]);
 
   // Store latest runFrame in a ref so the RAF loop always calls the latest version
@@ -423,31 +551,66 @@ export default function App() {
         />
       ))}
       <HandCursor ref={cursorRef} gestureState={gestureState} />
+      {/* Left hand cursor — always visible when left hand detected */}
+      <div
+        ref={leftCursorRef}
+        style={{
+          display: 'none',
+          position: 'absolute',
+          width: 20,
+          height: 20,
+          background: 'rgba(255, 107, 107, 0.15)',
+          border: '2px solid #FF6B6B',
+          boxShadow: '0 0 6px rgba(255, 107, 107, 0.3)',
+          borderRadius: '50%',
+          pointerEvents: 'none',
+          zIndex: 1000,
+          marginLeft: -10,
+          marginTop: -10,
+          willChange: 'transform',
+        }}
+      />
       <GripIndicator
         ref={gripIndicatorRef}
         gripConfidence={primaryGrip ? primaryGrip.gripForce : 0}
         visible={telemetryVisible && hands.length > 0}
       />
 
+      {/* Spatial feedback overlays */}
+      <ErrorBoundary inline fallbackLabel="Spatial highlight error">
+        <SpatialHighlight
+          handSpatialRef={handOverDOM.handSpatialRef}
+          visible={true}
+        />
+      </ErrorBoundary>
+      <ErrorBoundary inline fallbackLabel="Proximity feedback error">
+        <SpatialProximityFeedback
+          feedbackRef={spatialFeedback.feedbackRef}
+          visible={true}
+        />
+      </ErrorBoundary>
+
       {/* Telemetry overlay — press T */}
-      <TelemetryOverlay
-        visible={telemetryVisible}
-        onToggle={() => setTelemetryVisible((v) => !v)}
-      >
-        <HandSkeleton
-          hands={hands}
-          physicsData={physicsData}
-          workspaceWidth={W}
-          workspaceHeight={H}
-        />
-        <VelocityVectors
-          hands={hands}
-          physicsData={physicsData}
-          workspaceWidth={W}
-          workspaceHeight={H}
-        />
-        <GestureTimeline entries={timelineEntries} workspaceWidth={W} />
-      </TelemetryOverlay>
+      <ErrorBoundary inline fallbackLabel="Telemetry error">
+        <TelemetryOverlay
+          visible={telemetryVisible}
+          onToggle={() => setTelemetryVisible((v) => !v)}
+        >
+          <HandSkeleton
+            hands={hands}
+            physicsData={physicsData}
+            workspaceWidth={W}
+            workspaceHeight={H}
+          />
+          <VelocityVectors
+            hands={hands}
+            physicsData={physicsData}
+            workspaceWidth={W}
+            workspaceHeight={H}
+          />
+          <GestureTimeline entries={timelineEntries} workspaceWidth={W} />
+        </TelemetryOverlay>
+      </ErrorBoundary>
 
       {/* Status overlays */}
       {error && (
@@ -495,6 +658,13 @@ export default function App() {
               gripData={gripData}
               motionData={motionData}
               fps={fps}
+            />
+          </DraggablePanel>
+
+          <DraggablePanel initialX={20} initialY={H - 280} handCursors={panelHandCursors}>
+            <SpatialHUD
+              handSpatialRef={handOverDOM.handSpatialRef}
+              spatialEvents={spatialEventLog}
             />
           </DraggablePanel>
         </>

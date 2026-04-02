@@ -1,6 +1,7 @@
 import { magnitude3 } from '../../utils/geometry';
 import { gripColor } from '../../utils/colors';
 import type { HandPhysics, GripState, MotionPattern } from '../../types/telemetry';
+import { TELEMETRY_VIS, PANEL } from '../../config';
 
 interface DualHandHUDProps {
   physicsData: HandPhysics[];
@@ -10,9 +11,9 @@ interface DualHandHUDProps {
 }
 
 function velocityColor(speed: number): string {
-  if (speed < 50) return '#4A90D9';
-  if (speed < 200) return '#27C93F';
-  if (speed < 500) return '#FFBD2E';
+  if (speed < TELEMETRY_VIS.HUD_SPEED_THRESHOLDS[0]) return '#4A90D9';
+  if (speed < TELEMETRY_VIS.HUD_SPEED_THRESHOLDS[1]) return '#27C93F';
+  if (speed < TELEMETRY_VIS.HUD_SPEED_THRESHOLDS[2]) return '#FFBD2E';
   return '#FF5F56';
 }
 
@@ -31,10 +32,10 @@ function HandPanel({ physics, grip, motion, label }: {
     );
   }
 
-  const speed = magnitude3(physics.palmVelocity) * 1200; // to px/s
-  const wristSpeed = magnitude3(physics.wristVelocity) * 1200;
+  const speed = magnitude3(physics.palmVelocity) * TELEMETRY_VIS.HUD_PIXEL_MULTIPLIER; // to px/s
+  const wristSpeed = magnitude3(physics.wristVelocity) * TELEMETRY_VIS.HUD_PIXEL_MULTIPLIER;
   const accel = physics.landmarks[0]
-    ? magnitude3(physics.landmarks[0].acceleration) * 1200
+    ? magnitude3(physics.landmarks[0].acceleration) * TELEMETRY_VIS.HUD_PIXEL_MULTIPLIER
     : 0;
 
   return (
@@ -54,14 +55,14 @@ function HandPanel({ physics, grip, motion, label }: {
             value={grip.gripType.toUpperCase()}
             color={gripColor(grip.gripForce)}
           />
-          <Row label="FORCE" value={`${(grip.gripForce * 100).toFixed(0)}%`} color={gripColor(grip.gripForce)} />
+          <Row label="FORCE" value={`${(grip.gripForce * TELEMETRY_VIS.HUD_GRIP_FORCE_MULTIPLIER).toFixed(0)}%`} color={gripColor(grip.gripForce)} />
           <div style={curlBarContainer}>
             {(['T', 'I', 'M', 'R', 'P'] as const).map((finger, i) => (
               <div key={finger} style={{ textAlign: 'center' }}>
                 <div style={{
                   ...curlBar,
-                  height: `${grip.fingerCurl[i] * 20}px`,
-                  backgroundColor: grip.fingerCurl[i] > 0.7 ? '#FF5F56' : grip.fingerCurl[i] > 0.3 ? '#FFBD2E' : '#27C93F',
+                  height: `${grip.fingerCurl[i] * TELEMETRY_VIS.HUD_CURL_BAR_HEIGHT}px`,
+                  backgroundColor: grip.fingerCurl[i] > TELEMETRY_VIS.HUD_CURL_RED_THRESHOLD ? '#FF5F56' : grip.fingerCurl[i] > TELEMETRY_VIS.HUD_CURL_YELLOW_THRESHOLD ? '#FFBD2E' : '#27C93F',
                 }} />
                 <div style={{ fontSize: 8, opacity: 0.5 }}>{finger}</div>
               </div>
@@ -112,7 +113,7 @@ export function DualHandHUD({ physicsData, gripData, motionData, fps }: DualHand
     <div style={containerStyle}>
       <div style={{ ...rowStyle, borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 4, marginBottom: 4 }}>
         <span style={{ opacity: 0.6 }}>FPS</span>
-        <span style={{ color: fps > 50 ? '#27C93F' : fps > 30 ? '#FFBD2E' : '#FF5F56' }}>{fps}</span>
+        <span style={{ color: fps > TELEMETRY_VIS.FPS_GREEN_THRESHOLD ? '#27C93F' : fps > TELEMETRY_VIS.FPS_YELLOW_THRESHOLD ? '#FFBD2E' : '#FF5F56' }}>{fps}</span>
       </div>
       <div style={{ ...rowStyle, borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 4, marginBottom: 4 }}>
         <span style={{ opacity: 0.6 }}>HANDS</span>
@@ -127,7 +128,7 @@ export function DualHandHUD({ physicsData, gripData, motionData, fps }: DualHand
 // --- Styles ---
 
 const containerStyle: React.CSSProperties = {
-  width: 200,
+  width: PANEL.HUD_WIDTH,
   background: 'rgba(0,0,0,0.78)',
   border: '1px solid rgba(255,255,255,0.1)',
   borderRadius: 6,
@@ -136,7 +137,7 @@ const containerStyle: React.CSSProperties = {
   fontSize: 10,
   lineHeight: 1.6,
   color: 'rgba(255,255,255,0.85)',
-  maxHeight: 600,
+  maxHeight: PANEL.HUD_MAX_HEIGHT,
   overflowY: 'auto',
 };
 

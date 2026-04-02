@@ -2,6 +2,7 @@ import { useRef, useEffect } from 'react';
 import type { HandData } from '../../types';
 import type { HandPhysics } from '../../types/telemetry';
 import { speedToColor } from '../../utils/colors';
+import { TELEMETRY_VIS } from '../../config';
 
 interface HandSkeletonProps {
   hands: HandData[];
@@ -72,7 +73,7 @@ export function HandSkeleton({
         ctx.moveTo(ax, ay);
         ctx.lineTo(bx, by);
         ctx.strokeStyle = speedToColor(avgSpeed);
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = TELEMETRY_VIS.SKELETON_LINE_WIDTH;
         ctx.globalAlpha = 0.75;
         ctx.stroke();
         ctx.globalAlpha = 1;
@@ -85,7 +86,7 @@ export function HandSkeleton({
         const color = speedToColor(speed);
 
         ctx.beginPath();
-        ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.arc(px, py, TELEMETRY_VIS.SKELETON_LANDMARK_RADIUS, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
 

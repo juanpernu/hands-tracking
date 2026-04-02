@@ -4,8 +4,7 @@
  */
 
 import type { DraggableObjectData } from '../types';
-
-const COLLISION_ITERATIONS = 3;
+import { COLLISION } from '../config';
 
 /** Check if two AABBs overlap */
 export function objectsOverlap(a: DraggableObjectData, b: DraggableObjectData): boolean {
@@ -27,7 +26,7 @@ export function resolveCollisions(
   // Work on a mutable copy
   const result = objects.map((o) => ({ ...o }));
 
-  for (let iter = 0; iter < COLLISION_ITERATIONS; iter++) {
+  for (let iter = 0; iter < COLLISION.ITERATIONS; iter++) {
     let anyCollision = false;
 
     for (let i = 0; i < result.length; i++) {

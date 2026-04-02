@@ -1,5 +1,6 @@
 import { useRef, useCallback } from 'react';
 import type { DraggableObjectData } from '../types';
+import { TRACKER } from '../config';
 
 export interface TrackedObject {
   id: string;
@@ -15,6 +16,7 @@ export interface TrackedObject {
   grabbedBy: 'Left' | 'Right' | 'mouse' | null;
   grabStartTime: number;
   totalDistance: number;  // cumulative px moved during this grab
+  justReleased: boolean;  // true for one frame when transitioning from grabbed to not-grabbed
 }
 
 export interface ObjectTrackerResult {
@@ -73,10 +75,13 @@ export function useObjectTracker(): ObjectTrackerResult {
           // Just grabbed
           existing.grabStartTime = now;
           existing.totalDistance = 0;
-        }
-        if (!isGrabbed && existing.isGrabbed) {
-          // Just released — mark with negative totalDistance to signal one-time release
-          existing.totalDistance = -(existing.totalDistance || 1);
+          existing.justReleased = false;
+        } else if (!isGrabbed && existing.isGrabbed) {
+          // Just released
+          existing.justReleased = true;
+        } else {
+          // Clear the one-frame release flag
+          existing.justReleased = false;
         }
         if (isGrabbed) {
           existing.totalDistance += speed;
@@ -99,6 +104,7 @@ export function useObjectTracker(): ObjectTrackerResult {
           grabbedBy,
           grabStartTime: isGrabbed ? now : 0,
           totalDistance: 0,
+          justReleased: false,
         });
       }
     }
@@ -108,7 +114,7 @@ export function useObjectTracker(): ObjectTrackerResult {
   }, []);
 
   const getMovingObjects = useCallback((): TrackedObject[] => {
-    return resultRef.current.filter((t) => t.speed > 1);
+    return resultRef.current.filter((t) => t.speed > TRACKER.MOVING_SPEED_THRESHOLD);
   }, []);
 
   const getGrabbedObjects = useCallback((): TrackedObject[] => {

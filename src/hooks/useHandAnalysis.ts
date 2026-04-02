@@ -16,8 +16,7 @@ import { useGripDetection } from './useGripDetection';
 import { useMotionRecognition } from './useMotionRecognition';
 import type { HandData } from '../types';
 import type { HandPhysics, GripState, MotionPattern } from '../types/telemetry';
-
-const UI_THROTTLE_MS = 100; // ~10 fps for UI state updates
+import { UI } from '../config';
 
 export interface HandAnalysisData {
   physicsData: HandPhysics[];
@@ -66,7 +65,7 @@ export function useHandAnalysis(): UseHandAnalysisReturn {
       motionRef.current = motions;
 
       // Throttled UI state update (~10fps)
-      if (timestamp - lastUiUpdateRef.current >= UI_THROTTLE_MS) {
+      if (timestamp - lastUiUpdateRef.current >= UI.THROTTLE_MS) {
         lastUiUpdateRef.current = timestamp;
         setUiPhysics(physics);
         setUiGrip(grips);

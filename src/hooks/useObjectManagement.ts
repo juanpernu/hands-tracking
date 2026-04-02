@@ -3,10 +3,7 @@ import type { DraggableObjectData, Position } from '../types';
 import { COLORS } from '../types';
 import { hitTest as aabbHitTest } from '../utils/geometry';
 import { objectsOverlap, resolveCollisions } from '../utils/collision';
-
-const OBJECT_SIZE = 80;
-const MAX_OBJECTS = 20;
-const ADD_DEBOUNCE_MS = 500;
+import { OBJECTS, SPATIAL } from '../config';
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -25,26 +22,26 @@ function createObject(position: Position): DraggableObjectData {
     id: generateId(),
     x: position.x,
     y: position.y,
-    width: OBJECT_SIZE,
-    height: OBJECT_SIZE,
+    width: OBJECTS.SIZE,
+    height: OBJECTS.SIZE,
     color,
   };
 }
 
 function randomNonOverlappingPosition(existing: DraggableObjectData[]): Position {
-  for (let attempt = 0; attempt < 50; attempt++) {
+  for (let attempt = 0; attempt < OBJECTS.COLLISION_FIND_ATTEMPTS; attempt++) {
     const pos = {
-      x: randomInt(0, window.innerWidth - OBJECT_SIZE),
-      y: randomInt(0, window.innerHeight - OBJECT_SIZE),
+      x: randomInt(0, window.innerWidth - OBJECTS.SIZE),
+      y: randomInt(0, window.innerHeight - OBJECTS.SIZE),
     };
-    const candidate = { ...pos, width: OBJECT_SIZE, height: OBJECT_SIZE, id: '', color: '' };
+    const candidate = { ...pos, width: OBJECTS.SIZE, height: OBJECTS.SIZE, id: '', color: '' };
     const collides = existing.some((obj) => objectsOverlap(candidate as DraggableObjectData, obj));
     if (!collides) return pos;
   }
   // Fallback — just place it somewhere
   return {
-    x: randomInt(0, window.innerWidth - OBJECT_SIZE),
-    y: randomInt(0, window.innerHeight - OBJECT_SIZE),
+    x: randomInt(0, window.innerWidth - OBJECTS.SIZE),
+    y: randomInt(0, window.innerHeight - OBJECTS.SIZE),
   };
 }
 
@@ -80,11 +77,11 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
 
   const addObject = useCallback((position: Position) => {
     const now = Date.now();
-    if (now - lastAddTimeRef.current < ADD_DEBOUNCE_MS) return;
+    if (now - lastAddTimeRef.current < OBJECTS.ADD_DEBOUNCE_MS) return;
     lastAddTimeRef.current = now;
 
     setObjects((prev) => {
-      if (prev.length >= MAX_OBJECTS) return prev;
+      if (prev.length >= OBJECTS.MAX_COUNT) return prev;
       const newObj = createObject(position);
       return resolveCollisions([...prev, newObj], newObj.id, window.innerWidth, window.innerHeight);
     });
@@ -98,9 +95,69 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     setObjects((prev) => {
       const updated = prev.map((obj) => {
         if (obj.id !== id) return obj;
-        // Clamp to screen bounds
-        const x = Math.max(0, Math.min(position.x, window.innerWidth - obj.width));
-        const y = Math.max(0, Math.min(position.y, window.innerHeight - obj.height));
+        let x = Math.max(0, Math.min(position.x, window.innerWidth - obj.width));
+        let y = Math.max(0, Math.min(position.y, window.innerHeight - obj.height));
+
+        // Find the closest snap candidate across all objects
+        const snap = SPATIAL.SNAP_THRESHOLD;
+        let bestSnapX: number | null = null;
+        let bestSnapDistX = snap;
+        let bestSnapY: number | null = null;
+        let bestSnapDistY = snap;
+        let snapTargetId: string | null = null;
+
+        for (const other of prev) {
+          if (other.id === id) continue;
+
+          // Check all X edge alignments
+          const xCandidates = [
+            { snappedX: other.x, dist: Math.abs(x - other.x) },                                    // left-to-left
+            { snappedX: other.x + other.width, dist: Math.abs(x - (other.x + other.width)) },       // left-to-right
+            { snappedX: other.x - obj.width, dist: Math.abs((x + obj.width) - other.x) },           // right-to-left
+            { snappedX: other.x + other.width - obj.width, dist: Math.abs((x + obj.width) - (other.x + other.width)) }, // right-to-right
+          ];
+
+          for (const c of xCandidates) {
+            if (c.dist < bestSnapDistX) {
+              bestSnapDistX = c.dist;
+              bestSnapX = c.snappedX;
+              snapTargetId = other.id;
+            }
+          }
+
+          // Check all Y edge alignments
+          const yCandidates = [
+            { snappedY: other.y, dist: Math.abs(y - other.y) },
+            { snappedY: other.y + other.height, dist: Math.abs(y - (other.y + other.height)) },
+            { snappedY: other.y - obj.height, dist: Math.abs((y + obj.height) - other.y) },
+            { snappedY: other.y + other.height - obj.height, dist: Math.abs((y + obj.height) - (other.y + other.height)) },
+          ];
+
+          for (const c of yCandidates) {
+            if (c.dist < bestSnapDistY) {
+              bestSnapDistY = c.dist;
+              bestSnapY = c.snappedY;
+              if (!snapTargetId) snapTargetId = other.id;
+            }
+          }
+        }
+
+        // Apply snap only if it doesn't cause overlap with the snap target
+        if (bestSnapX !== null) {
+          const snappedObj = { ...obj, x: bestSnapX, y };
+          const target = prev.find((o) => o.id === snapTargetId);
+          if (!target || !objectsOverlap(snappedObj as DraggableObjectData, target)) {
+            x = bestSnapX;
+          }
+        }
+        if (bestSnapY !== null) {
+          const snappedObj = { ...obj, x, y: bestSnapY };
+          const target = prev.find((o) => o.id === snapTargetId);
+          if (!target || !objectsOverlap(snappedObj as DraggableObjectData, target)) {
+            y = bestSnapY;
+          }
+        }
+
         return { ...obj, x, y };
       });
       return resolveCollisions(updated, id, window.innerWidth, window.innerHeight);

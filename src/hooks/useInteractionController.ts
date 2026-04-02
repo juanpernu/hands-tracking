@@ -17,12 +17,7 @@ import type { GripState } from '../types/telemetry';
 import type { MotionPattern } from '../types/telemetry';
 import type { AgentGestureEvent, AgentGestureType } from '../agent/types';
 import { normalizedToPixel, magnitude3 } from '../utils/geometry';
-
-const EDGE_THRESHOLD = 0.08;
-const SHAKE_CLEAR_VELOCITY = 0.3;
-const SHAKE_CLEAR_REVERSALS = 4;
-const SHAKE_CLEAR_DEBOUNCE_MS = 2000;
-const SWIPE_DEBOUNCE_MS = 1000;
+import { INTERACTION } from '../config';
 
 export interface InteractionOutput {
   gestureState: GestureState;
@@ -162,14 +157,14 @@ export function useInteractionController(config?: InteractionControllerConfig) {
 
     if (leftGrip) {
       const open = leftGrip.opennessRatio;
-      partialLowGrabLeftRef.current = partialLowGrabLeftRef.current ? open < 0.8 : open < 0.65;
+      partialLowGrabLeftRef.current = partialLowGrabLeftRef.current ? open < INTERACTION.PARTIAL_GRAB_EXIT : open < INTERACTION.PARTIAL_GRAB_ENTER;
     } else {
       partialLowGrabLeftRef.current = false;
     }
 
     if (rightGrip) {
       const open = rightGrip.opennessRatio;
-      partialLowGrabRightRef.current = partialLowGrabRightRef.current ? open < 0.8 : open < 0.65;
+      partialLowGrabRightRef.current = partialLowGrabRightRef.current ? open < INTERACTION.PARTIAL_GRAB_EXIT : open < INTERACTION.PARTIAL_GRAB_ENTER;
     } else {
       partialLowGrabRightRef.current = false;
     }
@@ -180,10 +175,10 @@ export function useInteractionController(config?: InteractionControllerConfig) {
     } else if (hands.length > 0) {
       let nearEdge = false;
       for (const hand of hands) {
-        for (const lm of [hand.landmarks[0], hand.landmarks[8]]) {
+        for (const lm of INTERACTION.EDGE_LANDMARK_INDICES.map(i => hand.landmarks[i])) {
           if (
-            lm.x < EDGE_THRESHOLD || lm.x > 1 - EDGE_THRESHOLD ||
-            lm.y < EDGE_THRESHOLD || lm.y > 1 - EDGE_THRESHOLD
+            lm.x < INTERACTION.EDGE_THRESHOLD || lm.x > 1 - INTERACTION.EDGE_THRESHOLD ||
+            lm.y < INTERACTION.EDGE_THRESHOLD || lm.y > 1 - INTERACTION.EDGE_THRESHOLD
           ) {
             nearEdge = true;
             break;
@@ -393,17 +388,17 @@ export function useInteractionController(config?: InteractionControllerConfig) {
     if (
       hands.length >= 1 &&
       physicsData.length > 0 &&
-      now - shakeHistoryRef.current.lastClearTime > SHAKE_CLEAR_DEBOUNCE_MS
+      now - shakeHistoryRef.current.lastClearTime > INTERACTION.SHAKE_CLEAR_DEBOUNCE_MS
     ) {
       const maxSpeed = Math.max(...physicsData.map((p) => magnitude3(p.palmVelocity)));
-      if (maxSpeed > SHAKE_CLEAR_VELOCITY) {
+      if (maxSpeed > INTERACTION.SHAKE_CLEAR_VELOCITY) {
         const fastestHand = physicsData.reduce((a, b) =>
           magnitude3(a.palmVelocity) > magnitude3(b.palmVelocity) ? a : b,
         );
         const dir = Math.atan2(fastestHand.palmVelocity.y, fastestHand.palmVelocity.x);
         const hist = shakeHistoryRef.current.directions;
         hist.push(dir);
-        if (hist.length > 15) hist.shift();
+        if (hist.length > INTERACTION.SHAKE_HISTORY_SIZE) hist.shift();
 
         let reversals = 0;
         for (let j = 2; j < hist.length; j++) {
@@ -412,7 +407,7 @@ export function useInteractionController(config?: InteractionControllerConfig) {
           if (prev * curr < 0 && Math.abs(curr) > 0.3) reversals++;
         }
 
-        if (reversals >= SHAKE_CLEAR_REVERSALS && objects.length > 0 && !shakeClearingRef.current) {
+        if (reversals >= INTERACTION.SHAKE_CLEAR_REVERSALS && objects.length > 0 && !shakeClearingRef.current) {
           emitGesture('shake', hands);
           shakeClearingRef.current = true;
           shakeHistoryRef.current.lastClearTime = now;
@@ -424,7 +419,7 @@ export function useInteractionController(config?: InteractionControllerConfig) {
             const tid = window.setTimeout(() => {
               removeObject(id);
               if (i === ids.length - 1) shakeClearingRef.current = false;
-            }, i * 150);
+            }, i * INTERACTION.SHAKE_CLEAR_INTERVAL_MS);
             shakeTimeoutIdsRef.current.push(tid);
           });
         }
@@ -453,7 +448,7 @@ export function useInteractionController(config?: InteractionControllerConfig) {
     // Rising-edge: only emit when transitioning from no-swipe to swipe
     if (isSwipeActive && !prevSwipeActiveRef.current) {
       // Debounce: prevent rapid re-triggering
-      if (now - lastSwipeEmitTimeRef.current > SWIPE_DEBOUNCE_MS) {
+      if (now - lastSwipeEmitTimeRef.current > INTERACTION.SWIPE_DEBOUNCE_MS) {
         const direction = swipePattern!.swipeDirection!;
         const gestureType: AgentGestureType = `swipe-${direction}`;
         emitGesture(gestureType, hands);

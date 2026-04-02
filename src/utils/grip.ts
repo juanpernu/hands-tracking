@@ -6,6 +6,7 @@
 import type { GripType } from '../types/telemetry';
 import type { Landmark } from '../types/index';
 import { clamp, distance3d, dot3, normalize3, sub3 } from './geometry';
+import { GRIP, LANDMARK } from '../config';
 
 /**
  * Compute the curl for a single finger using the bone-angle method.
@@ -50,32 +51,32 @@ export function classifyGrip(
   const [thumbCurl, indexCurl, middleCurl, ringCurl, pinkyCurl] = fingerCurl;
 
   // Fist: every finger tightly curled.
-  if (thumbCurl > 0.7 && indexCurl > 0.7 && middleCurl > 0.7 && ringCurl > 0.7 && pinkyCurl > 0.7) {
+  if (thumbCurl > GRIP.FIST_THRESHOLD && indexCurl > GRIP.FIST_THRESHOLD && middleCurl > GRIP.FIST_THRESHOLD && ringCurl > GRIP.FIST_THRESHOLD && pinkyCurl > GRIP.FIST_THRESHOLD) {
     return 'fist';
   }
 
   // Open: every finger extended.
-  if (thumbCurl < 0.3 && indexCurl < 0.3 && middleCurl < 0.3 && ringCurl < 0.3 && pinkyCurl < 0.3) {
+  if (thumbCurl < GRIP.OPEN_THRESHOLD && indexCurl < GRIP.OPEN_THRESHOLD && middleCurl < GRIP.OPEN_THRESHOLD && ringCurl < GRIP.OPEN_THRESHOLD && pinkyCurl < GRIP.OPEN_THRESHOLD) {
     return 'open';
   }
 
   // Pinch: thumb + index extended, others curled, and tips close together.
   if (
-    thumbCurl < 0.3 &&
-    indexCurl < 0.3 &&
-    middleCurl > 0.5 &&
-    ringCurl > 0.5 &&
-    pinkyCurl > 0.5
+    thumbCurl < GRIP.PINCH_OPEN_THRESHOLD &&
+    indexCurl < GRIP.PINCH_OPEN_THRESHOLD &&
+    middleCurl > GRIP.PINCH_CURL_THRESHOLD &&
+    ringCurl > GRIP.PINCH_CURL_THRESHOLD &&
+    pinkyCurl > GRIP.PINCH_CURL_THRESHOLD
   ) {
-    const thumbTip = landmarks[4];
-    const indexTip = landmarks[8];
-    if (thumbTip && indexTip && distance3d(thumbTip, indexTip) < 0.05) {
+    const thumbTip = landmarks[LANDMARK.THUMB_TIP];
+    const indexTip = landmarks[LANDMARK.INDEX_TIP];
+    if (thumbTip && indexTip && distance3d(thumbTip, indexTip) < GRIP.PINCH_TIP_DISTANCE) {
       return 'pinch';
     }
   }
 
   // Point: index extended, middle/ring/pinky curled.
-  if (indexCurl < 0.3 && middleCurl > 0.6 && ringCurl > 0.6 && pinkyCurl > 0.6) {
+  if (indexCurl < GRIP.POINT_OPEN_THRESHOLD && middleCurl > GRIP.POINT_CURL_THRESHOLD && ringCurl > GRIP.POINT_CURL_THRESHOLD && pinkyCurl > GRIP.POINT_CURL_THRESHOLD) {
     return 'point';
   }
 

@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
+import { PANEL } from '../config';
 
 interface HandCursorInput {
   x: number;
@@ -35,7 +36,7 @@ export function DraggablePanel({
   handCursors = [],
 }: DraggablePanelProps) {
   const [position, setPosition] = useState(() =>
-    clampPosition(initialX, initialY, 320, 240),
+    clampPosition(initialX, initialY, PANEL.CAMERA_WIDTH, PANEL.CAMERA_HEIGHT),
   );
   const [isDragging, setIsDragging] = useState(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
@@ -56,8 +57,8 @@ export function DraggablePanel({
   // Helper to set position with clamping
   const setClampedPosition = useCallback((x: number, y: number) => {
     const el = panelRef.current;
-    const w = el?.offsetWidth ?? 320;
-    const h = el?.offsetHeight ?? 240;
+    const w = el?.offsetWidth ?? PANEL.CAMERA_WIDTH;
+    const h = el?.offsetHeight ?? PANEL.CAMERA_HEIGHT;
     setPosition(clampPosition(x, y, w, h));
   }, []);
 
@@ -116,8 +117,8 @@ export function DraggablePanel({
         if (cursor.isGrabbing && !wasGrabbing) {
           if (
             activeHandIndexRef.current === null &&
-            cursor.x >= pos.x - 10 && cursor.x <= pos.x + pw + 10 &&
-            cursor.y >= pos.y - 10 && cursor.y <= pos.y + ph + 10
+            cursor.x >= pos.x - PANEL.HIT_BUFFER && cursor.x <= pos.x + pw + PANEL.HIT_BUFFER &&
+            cursor.y >= pos.y - PANEL.HIT_BUFFER && cursor.y <= pos.y + ph + PANEL.HIT_BUFFER
           ) {
             activeHandIndexRef.current = i;
             setIsDragging(true);

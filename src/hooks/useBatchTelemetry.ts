@@ -7,6 +7,7 @@ import type {
   HandTelemetry,
   GestureEvent,
 } from '../types/telemetry';
+import type { SpatialTelemetryData } from '../types/spatial';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,6 +37,7 @@ interface BatchTelemetryResult {
     grips: GripState[],
     motions: MotionPattern[],
     timestamp: number,
+    spatialData?: ReadonlyMap<string, SpatialTelemetryData>,
   ) => void;
   sessionId: string;
   batchCount: number;
@@ -71,6 +73,9 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
   // sessionId is stable for the lifetime of the component.
   const [sessionId] = useState(() => generateId());
 
+  // Offset to convert performance.now() → Unix ms (Date.now())
+  const perfToUnixRef = useRef(Date.now() - performance.now());
+
   const frameCounterRef = useRef(0);
   const sequenceRef = useRef(0);
   const [batchCount, setBatchCount] = useState(0);
@@ -83,8 +88,8 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
     endTime: 0,
   });
 
-  // Initialized lazily on first record() call to avoid calling Date.now() during render.
-  const lastFlushRef = useRef(-1);
+  // Initialized to current time so the first interval-based flush waits the full interval.
+  const lastFlushRef = useRef(Date.now());
   const mountedRef = useRef(true);
 
   const statsRef = useRef({
@@ -134,11 +139,12 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
     // THEN send the new batch
     sequenceRef.current++;
     const seq = sequenceRef.current;
+    const offset = perfToUnixRef.current;
     const payload = JSON.stringify({
       sessionId: sessionIdRef.current,
       sequenceNum: seq,
-      startTime: buf.startTime,
-      endTime: buf.endTime,
+      startTime: Math.round(buf.startTime + offset),
+      endTime: Math.round(buf.endTime + offset),
       frames: buf.frames,
       events: buf.events,
     });
@@ -169,13 +175,9 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
       grips: GripState[],
       motions: MotionPattern[],
       timestamp: number,
+      spatialData?: ReadonlyMap<string, SpatialTelemetryData>,
     ) => {
       if (!enabled) return;
-
-      // Lazy-init lastFlushRef on first record call (avoids Date.now() during render).
-      if (lastFlushRef.current === -1) {
-        lastFlushRef.current = Date.now();
-      }
 
       const buf = bufferRef.current;
       const stats = statsRef.current;
@@ -188,6 +190,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
         if (!hand || !p || !g || !m) continue;
 
         const frameId = frameCounterRef.current++;
+        const spatial = spatialData?.get(hand.handedness);
         const frame: HandTelemetry = {
           frameId,
           timestamp,
@@ -197,6 +200,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
           physics: p,
           grip: g,
           motion: m,
+          ...(spatial ? { spatial } : {}),
         };
 
         buf.frames.push(frame);
@@ -228,9 +232,6 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
       if (!mountedRef.current) return;
       setPendingFrames(bufferRef.current.frames.length);
 
-      // Skip interval-based flush until the first record() initializes lastFlushRef.
-      if (lastFlushRef.current === -1) return;
-
       const elapsed = Date.now() - lastFlushRef.current;
       if (elapsed >= maxIntervalMs && bufferRef.current.frames.length > 0) {
         flush();
@@ -250,6 +251,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
       const sid = sessionIdRef.current;
 
       // Flush remaining frames in chunks that fit sendBeacon's 64KB limit
+      const offset = perfToUnixRef.current;
       if (buf.frames.length > 0) {
         for (let i = 0; i < buf.frames.length; i += BEACON_CHUNK_SIZE) {
           sequenceRef.current++;
@@ -257,8 +259,8 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
           const payload = new Blob([JSON.stringify({
             sessionId: sid,
             sequenceNum: sequenceRef.current,
-            startTime: chunk[0].timestamp,
-            endTime: chunk[chunk.length - 1].timestamp,
+            startTime: Math.round(chunk[0].timestamp + offset),
+            endTime: Math.round(chunk[chunk.length - 1].timestamp + offset),
             frames: chunk,
             events: i === 0 ? buf.events : [],
           })], { type: 'application/json' });
@@ -270,8 +272,8 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
       const durationSec = (stats.lastTimestamp - stats.firstTimestamp) / 1000;
       const summaryBlob = new Blob([JSON.stringify({
         sessionId: sid,
-        startTime: stats.firstTimestamp,
-        endTime: stats.lastTimestamp,
+        startTime: Math.round(stats.firstTimestamp + offset),
+        endTime: Math.round(stats.lastTimestamp + offset),
         totalFrames: stats.totalFrames,
         totalEvents: stats.totalEvents,
         totalBatches: sequenceRef.current,
