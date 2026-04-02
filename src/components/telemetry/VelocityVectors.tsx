@@ -2,6 +2,7 @@ import { useRef, useEffect } from 'react';
 import type { HandData } from '../../types';
 import type { HandPhysics } from '../../types/telemetry';
 import { speedToColor } from '../../utils/colors';
+import { TELEMETRY_VIS, FINGERTIP_INDICES } from '../../config';
 
 interface VelocityVectorsProps {
   hands: HandData[];
@@ -9,11 +10,6 @@ interface VelocityVectorsProps {
   workspaceWidth: number;
   workspaceHeight: number;
 }
-
-const FINGERTIP_INDICES = [4, 8, 12, 16, 20];
-const MAX_ARROW_LENGTH = 60;
-const ARROWHEAD_BASE = 8;
-const ARROWHEAD_DEPTH = 12;
 
 function drawArrow(
   ctx: CanvasRenderingContext2D,
@@ -31,16 +27,16 @@ function drawArrow(
   ctx.moveTo(fromX, fromY);
   ctx.lineTo(toX, toY);
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = TELEMETRY_VIS.ARROW_LINE_WIDTH;
   ctx.stroke();
 
   // Arrowhead — filled triangle at tip
-  const halfBase = ARROWHEAD_BASE / 2;
+  const halfBase = TELEMETRY_VIS.ARROWHEAD_BASE / 2;
   const perpAngle = angle + Math.PI / 2;
 
   // Base center is ARROWHEAD_DEPTH back from tip
-  const baseCenterX = toX - Math.cos(angle) * ARROWHEAD_DEPTH;
-  const baseCenterY = toY - Math.sin(angle) * ARROWHEAD_DEPTH;
+  const baseCenterX = toX - Math.cos(angle) * TELEMETRY_VIS.ARROWHEAD_DEPTH;
+  const baseCenterY = toY - Math.sin(angle) * TELEMETRY_VIS.ARROWHEAD_DEPTH;
 
   const p1x = toX;
   const p1y = toY;
@@ -89,14 +85,14 @@ export function VelocityVectors({
         if (!lm || !lp) return;
 
         const speed = lp.speed;
-        if (speed < 1) return;
+        if (speed < TELEMETRY_VIS.ARROW_SPEED_THRESHOLD) return;
 
         const px = (1 - lm.x) * workspaceWidth;
         const py = lm.y * workspaceHeight;
 
         // Mirror X axis for velocity direction
         const angle = Math.atan2(lp.velocity.y, -lp.velocity.x);
-        const arrowLength = Math.min(speed * 4, MAX_ARROW_LENGTH);
+        const arrowLength = Math.min(speed * TELEMETRY_VIS.ARROW_LENGTH_MULTIPLIER, TELEMETRY_VIS.ARROW_MAX_LENGTH);
         const color = speedToColor(speed);
 
         drawArrow(ctx, px, py, angle, arrowLength, color);

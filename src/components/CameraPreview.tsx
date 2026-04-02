@@ -1,13 +1,10 @@
 import React, { useState } from 'react';
+import { PANEL } from '../config';
 
 interface CameraPreviewProps {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   visible: boolean;
 }
-
-const WIDTH = 320;
-const HEIGHT = 240;
-const TITLE_BAR_HEIGHT = 28;
 
 export default function CameraPreview({ videoRef, visible }: CameraPreviewProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -17,7 +14,7 @@ export default function CameraPreview({ videoRef, visible }: CameraPreviewProps)
   return (
     <div
       style={{
-        width: WIDTH,
+        width: PANEL.CAMERA_WIDTH,
         borderRadius: 8,
         overflow: 'hidden',
         boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.3)',
@@ -28,7 +25,7 @@ export default function CameraPreview({ videoRef, visible }: CameraPreviewProps)
       {/* Title bar */}
       <div
         style={{
-          height: TITLE_BAR_HEIGHT,
+          height: PANEL.TITLE_BAR_HEIGHT,
           background: 'linear-gradient(180deg, #3a3a3a 0%, #2e2e2e 100%)',
           display: 'flex',
           alignItems: 'center',
@@ -102,8 +99,8 @@ export default function CameraPreview({ videoRef, visible }: CameraPreviewProps)
       {!collapsed && (
         <div
           style={{
-            width: WIDTH,
-            height: HEIGHT,
+            width: PANEL.CAMERA_WIDTH,
+            height: PANEL.CAMERA_HEIGHT,
             background: '#111',
             position: 'relative',
             overflow: 'hidden',

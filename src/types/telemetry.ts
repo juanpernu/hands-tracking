@@ -1,4 +1,5 @@
 import type { Landmark } from './index';
+import type { SpatialTelemetryData } from './spatial';
 
 // Primitives
 export interface Vec3 {
@@ -90,6 +91,7 @@ export interface HandTelemetry {
   physics: HandPhysics;
   grip: GripState;
   motion: MotionPattern;
+  spatial?: SpatialTelemetryData;
 }
 
 // Ring buffer

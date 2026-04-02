@@ -8,14 +8,7 @@ import {
   normalize3,
   dot3,
 } from '../utils/geometry';
-
-// ─── constants ────────────────────────────────────────────────────────────────
-
-const EMA_ALPHA = 0.4;
-const DOMINANT_AXIS_THRESHOLD = 0.01;
-
-/** Landmark indices that form the palm base. */
-const PALM_INDICES = [0, 5, 9, 13, 17] as const;
+import { PHYSICS, PALM_INDICES } from '../config';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,12 +20,17 @@ function zeroVec3(): Vec3 {
  * Compute the finite difference velocity for a single landmark.
  * v = (pos[t] - pos[t-1]) / deltaSeconds
  */
+function clampComponent(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(max, Math.max(min, value));
+}
+
 function landmarkVelocity(curr: Landmark, prev: Landmark, deltaSeconds: number): Vec3 {
   const delta = sub3(curr, prev);
   return {
-    x: delta.x / deltaSeconds,
-    y: delta.y / deltaSeconds,
-    z: delta.z / deltaSeconds,
+    x: clampComponent(delta.x / deltaSeconds, -100, 100),
+    y: clampComponent(delta.y / deltaSeconds, -100, 100),
+    z: clampComponent(delta.z / deltaSeconds, -100, 100),
   };
 }
 
@@ -43,9 +41,9 @@ function landmarkVelocity(curr: Landmark, prev: Landmark, deltaSeconds: number):
 function landmarkAcceleration(currVel: Vec3, prevVel: Vec3, deltaSeconds: number): Vec3 {
   const delta = sub3(currVel, prevVel);
   return {
-    x: delta.x / deltaSeconds,
-    y: delta.y / deltaSeconds,
-    z: delta.z / deltaSeconds,
+    x: clampComponent(delta.x / deltaSeconds, -1000, 1000),
+    y: clampComponent(delta.y / deltaSeconds, -1000, 1000),
+    z: clampComponent(delta.z / deltaSeconds, -1000, 1000),
   };
 }
 
@@ -121,7 +119,7 @@ function dominantAxis(palmVel: Vec3): HandPhysics['dominantAxis'] {
   const ay = Math.abs(palmVel.y);
   const az = Math.abs(palmVel.z);
 
-  if (ax < DOMINANT_AXIS_THRESHOLD && ay < DOMINANT_AXIS_THRESHOLD && az < DOMINANT_AXIS_THRESHOLD) {
+  if (ax < PHYSICS.DOMINANT_AXIS_THRESHOLD && ay < PHYSICS.DOMINANT_AXIS_THRESHOLD && az < PHYSICS.DOMINANT_AXIS_THRESHOLD) {
     return 'none';
   }
 
@@ -188,7 +186,7 @@ export function useHandPhysics(): (hands: HandData[], timestamp: number) => Hand
 
         for (let i = 0; i < landmarkCount; i++) {
           const raw = landmarkVelocity(landmarks[i], prev.landmarks[i], deltaSeconds);
-          const smoothed = emaVec3(raw, prev.velocities[i] ?? zeroVec3(), EMA_ALPHA);
+          const smoothed = emaVec3(raw, prev.velocities[i] ?? zeroVec3(), PHYSICS.EMA_ALPHA);
           rawVelocities.push(raw);
           smoothedVelocities.push(smoothed);
         }

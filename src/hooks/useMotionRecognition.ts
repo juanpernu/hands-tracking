@@ -2,6 +2,7 @@ import { useRef, useCallback } from 'react';
 import type { HandPhysics, MotionPattern, SwipeDirection } from '../types/telemetry';
 import { magnitude3, clamp } from '../utils/geometry';
 import { wrapAngleDelta } from '../utils/motion';
+import { MOTION } from '../config';
 
 // ─── Ring buffer frame type ───────────────────────────────────────────────────
 
@@ -12,8 +13,6 @@ interface FrameSnapshot {
   /** atan2(vy, vx) of palmVelocity in the XY plane */
   angle: number;
 }
-
-const BUFFER_CAPACITY = 30;
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -29,7 +28,7 @@ const BUFFER_CAPACITY = 30;
 export function useMotionRecognition(): (physics: HandPhysics, timestamp: number) => MotionPattern {
   /**
    * Ring buffer stored as a fixed-length array with a head pointer.
-   * `size` tracks how many valid entries exist (up to BUFFER_CAPACITY).
+   * `size` tracks how many valid entries exist (up to MOTION.BUFFER_CAPACITY).
    */
   const bufferRef = useRef<FrameSnapshot[]>([]);
   const headRef = useRef<number>(0);
@@ -41,8 +40,8 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
   function push(frame: FrameSnapshot): void {
     const buf = bufferRef.current;
     buf[headRef.current] = frame;
-    headRef.current = (headRef.current + 1) % BUFFER_CAPACITY;
-    if (sizeRef.current < BUFFER_CAPACITY) sizeRef.current++;
+    headRef.current = (headRef.current + 1) % MOTION.BUFFER_CAPACITY;
+    if (sizeRef.current < MOTION.BUFFER_CAPACITY) sizeRef.current++;
   }
 
   /**
@@ -54,9 +53,9 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
     const head = headRef.current;
     const buf = bufferRef.current;
     // oldest slot when buffer is full: headRef.current; otherwise slot 0
-    const startSlot = size < BUFFER_CAPACITY ? 0 : head;
+    const startSlot = size < MOTION.BUFFER_CAPACITY ? 0 : head;
     for (let i = 0; i < size; i++) {
-      const slot = (startSlot + i) % BUFFER_CAPACITY;
+      const slot = (startSlot + i) % MOTION.BUFFER_CAPACITY;
       cb(buf[slot]!, i);
     }
   }
@@ -67,15 +66,15 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
     if (offset >= size) return undefined;
     const head = headRef.current;
     // head points to the NEXT write slot, so newest = head - 1
-    const slot = (head - 1 - offset + BUFFER_CAPACITY * 2) % BUFFER_CAPACITY;
+    const slot = (head - 1 - offset + MOTION.BUFFER_CAPACITY * 2) % MOTION.BUFFER_CAPACITY;
     return bufferRef.current[slot];
   }
 
   // ─── Pattern detectors ─────────────────────────────────────────────────────
 
   function detectSwipe(timestamp: number): MotionPattern | null {
-    const SPEED_THRESHOLD = 0.8; // units/sec
-    const MIN_FRAMES = 5;
+    const SPEED_THRESHOLD = MOTION.SWIPE_SPEED_THRESHOLD;
+    const MIN_FRAMES = MOTION.SWIPE_MIN_FRAMES;
 
     // Walk from newest backwards, counting consecutive frames above threshold
     // on the same dominant axis with the same sign.
@@ -125,11 +124,14 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
 
     if (consecutiveX >= MIN_FRAMES && absX >= absY) {
       const direction: SwipeDirection = dominantVx > 0 ? 'right' : 'left';
+      const newest = fromNewest(0);
+      const oldest = fromNewest(consecutiveX - 1);
+      const durationMs = newest && oldest ? newest.timestamp - oldest.timestamp : 0;
       return {
         type: 'swipe',
         confidence: clamp(latestSpeed / 1.5, 0, 1),
         swipeDirection: direction,
-        durationMs: consecutiveX * (1000 / 30), // approx at 30fps
+        durationMs,
         timestamp,
       };
     }
@@ -137,11 +139,14 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
     if (consecutiveY >= MIN_FRAMES) {
       // In screen-space Y increases downward; map positive vy → 'down'.
       const direction: SwipeDirection = dominantVy > 0 ? 'down' : 'up';
+      const newest = fromNewest(0);
+      const oldest = fromNewest(consecutiveY - 1);
+      const durationMs = newest && oldest ? newest.timestamp - oldest.timestamp : 0;
       return {
         type: 'swipe',
         confidence: clamp(latestSpeed / 1.5, 0, 1),
         swipeDirection: direction,
-        durationMs: consecutiveY * (1000 / 30),
+        durationMs,
         timestamp,
       };
     }
@@ -150,8 +155,8 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
   }
 
   function detectStaticHold(timestamp: number): MotionPattern | null {
-    const SPEED_LIMIT = 0.02;
-    const MIN_FRAMES = 15;
+    const SPEED_LIMIT = MOTION.STATIC_SPEED_LIMIT;
+    const MIN_FRAMES = MOTION.STATIC_MIN_FRAMES;
 
     let count = 0;
     let totalDeltaMs = 0;
@@ -170,7 +175,7 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
         if (next) {
           totalDeltaMs += frame.timestamp - next.timestamp;
         } else {
-          totalDeltaMs += 1000 / 30; // fallback: 30fps
+          totalDeltaMs += 1000 / MOTION.TARGET_FPS; // fallback
         }
       } else {
         break; // streak broken
@@ -190,9 +195,9 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
   }
 
   function detectAccelerationBurst(timestamp: number): MotionPattern | null {
-    const SPEED_NOW_THRESHOLD = 0.5;
-    const SPEED_PREV_THRESHOLD = 0.1;
-    const LOOKBACK = 3;
+    const SPEED_NOW_THRESHOLD = MOTION.ACCEL_BURST_SPEED_NOW;
+    const SPEED_PREV_THRESHOLD = MOTION.ACCEL_BURST_SPEED_PREV;
+    const LOOKBACK = MOTION.ACCEL_BURST_LOOKBACK;
 
     const newest = fromNewest(0);
     const older = fromNewest(LOOKBACK);
@@ -233,7 +238,7 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
       const delta = wrapAngleDelta(frame.angle - prevAngle);
       accumulated += delta;
 
-      if (prevDelta !== undefined && Math.sign(delta) !== Math.sign(prevDelta) && Math.abs(delta) > 0.01) {
+      if (prevDelta !== undefined && Math.sign(delta) !== Math.sign(prevDelta) && Math.abs(delta) > MOTION.CIRCULAR_MIN_ANGLE_CHANGE) {
         reversals++;
       }
       prevDelta = delta;
@@ -243,7 +248,7 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
     if (Math.abs(accumulated) > TWO_PI) {
       // Smoothness: fewer reversals = smoother circle.  Max expected reversals
       // in a noisy but genuine circle is roughly 20% of frames.
-      const maxReversals = size * 0.2;
+      const maxReversals = size * MOTION.CIRCULAR_MAX_REVERSAL_RATIO;
       const smoothness = clamp(1 - reversals / Math.max(maxReversals, 1), 0, 1);
 
       return {
