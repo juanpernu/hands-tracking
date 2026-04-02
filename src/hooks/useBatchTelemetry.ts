@@ -1,5 +1,4 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 import type { HandData } from '../types';
 import type {
   HandPhysics,
@@ -9,10 +8,25 @@ import type {
   GestureEvent,
 } from '../types/telemetry';
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 interface BatchConfig {
-  maxFrames: number;
-  maxIntervalMs: number;
-  enabled: boolean;
+  maxFrames?: number;
+  maxIntervalMs?: number;
+  enabled?: boolean;
 }
 
 interface BatchTelemetryResult {
@@ -35,13 +49,27 @@ interface PendingBatch {
   endTime: number;
 }
 
-const MAX_RETRIES = 3;
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
-export function useBatchTelemetry(config: BatchConfig): BatchTelemetryResult {
-  const { maxFrames, maxIntervalMs, enabled } = config;
+const MAX_RETRIES = 3;
+const MAX_RETRY_QUEUE = 10;
+const BEACON_CHUNK_SIZE = 15; // ~15 frames * ~3KB ≈ 45KB, well under sendBeacon's 64KB limit
+const DEFAULT_MAX_FRAMES = 500;
+const DEFAULT_MAX_INTERVAL_MS = 10_000;
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
+export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResult {
+  const maxFrames = config.maxFrames ?? DEFAULT_MAX_FRAMES;
+  const maxIntervalMs = config.maxIntervalMs ?? DEFAULT_MAX_INTERVAL_MS;
+  const enabled = config.enabled ?? true;
 
   // sessionId is stable for the lifetime of the component.
-  const [sessionId] = useState(() => uuidv4());
+  const [sessionId] = useState(() => generateId());
 
   const frameCounterRef = useRef(0);
   const sequenceRef = useRef(0);
@@ -69,38 +97,17 @@ export function useBatchTelemetry(config: BatchConfig): BatchTelemetryResult {
   // Keep sessionId accessible in callbacks without stale closures.
   const sessionIdRef = useRef(sessionId);
 
+  // -----------------------------------------------------------------------
+  // flush – process retry queue FIRST, then send the new batch
+  // -----------------------------------------------------------------------
   const flush = useCallback(() => {
     const buf = bufferRef.current;
     if (buf.frames.length === 0) return;
 
-    sequenceRef.current++;
-    const seq = sequenceRef.current;
-
-    const payload = JSON.stringify({
-      sessionId: sessionIdRef.current,
-      sequenceNum: seq,
-      startTime: buf.startTime,
-      endTime: buf.endTime,
-      frames: buf.frames,
-      events: buf.events,
-    });
-
-    bufferRef.current = { frames: [], events: [], startTime: 0, endTime: 0 };
-    lastFlushRef.current = Date.now();
-    setPendingFrames(0);
-    setBatchCount(seq);
-
-    fetch('/api/telemetry/batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: payload,
-    }).catch(() => {
-      retryQueueRef.current.push({ payload, retries: 0 });
-    });
-
-    const queue = retryQueueRef.current;
+    // Process retry queue FIRST
+    const retries = retryQueueRef.current;
     retryQueueRef.current = [];
-    for (const item of queue) {
+    for (const item of retries) {
       if (item.retries >= MAX_RETRIES) {
         console.warn('[batch-telemetry] Dropping batch after max retries');
         continue;
@@ -113,8 +120,37 @@ export function useBatchTelemetry(config: BatchConfig): BatchTelemetryResult {
         retryQueueRef.current.push({ payload: item.payload, retries: item.retries + 1 });
       });
     }
+
+    // THEN send the new batch
+    sequenceRef.current++;
+    const seq = sequenceRef.current;
+    const payload = JSON.stringify({
+      sessionId: sessionIdRef.current,
+      sequenceNum: seq,
+      startTime: buf.startTime,
+      endTime: buf.endTime,
+      frames: buf.frames,
+      events: buf.events,
+    });
+
+    bufferRef.current = { frames: [], events: [], startTime: 0, endTime: 0 };
+    lastFlushRef.current = Date.now();
+    setBatchCount(seq);
+
+    fetch('/api/telemetry/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    }).catch(() => {
+      if (retryQueueRef.current.length < MAX_RETRY_QUEUE) {
+        retryQueueRef.current.push({ payload, retries: 0 });
+      }
+    });
   }, []);
 
+  // -----------------------------------------------------------------------
+  // record – hot path, NO setState here to avoid re-renders at 30fps
+  // -----------------------------------------------------------------------
   const record = useCallback(
     (
       hands: HandData[],
@@ -156,7 +192,8 @@ export function useBatchTelemetry(config: BatchConfig): BatchTelemetryResult {
         stats.lastTimestamp = timestamp;
       }
 
-      setPendingFrames(buf.frames.length);
+      // NOTE: setPendingFrames is NOT called here to avoid 30fps re-renders.
+      // It is updated in the 1-second interval instead.
 
       if (buf.frames.length >= maxFrames) {
         flush();
@@ -165,11 +202,15 @@ export function useBatchTelemetry(config: BatchConfig): BatchTelemetryResult {
     [enabled, maxFrames, flush],
   );
 
-  // Interval-based flush check.
+  // -----------------------------------------------------------------------
+  // Interval-based flush check + pendingFrames update (1 Hz)
+  // -----------------------------------------------------------------------
   useEffect(() => {
     if (!enabled) return;
 
     const id = setInterval(() => {
+      setPendingFrames(bufferRef.current.frames.length);
+
       const elapsed = Date.now() - lastFlushRef.current;
       if (elapsed >= maxIntervalMs && bufferRef.current.frames.length > 0) {
         flush();
@@ -179,28 +220,35 @@ export function useBatchTelemetry(config: BatchConfig): BatchTelemetryResult {
     return () => clearInterval(id);
   }, [enabled, maxIntervalMs, flush]);
 
-  // Flush on unload.
+  // -----------------------------------------------------------------------
+  // Flush on unload – chunked sendBeacon to respect the 64KB limit
+  // -----------------------------------------------------------------------
   useEffect(() => {
     const handleUnload = () => {
       const buf = bufferRef.current;
       const stats = statsRef.current;
       const sid = sessionIdRef.current;
 
+      // Flush remaining frames in chunks that fit sendBeacon's 64KB limit
       if (buf.frames.length > 0) {
-        sequenceRef.current++;
-        const batchPayload = JSON.stringify({
-          sessionId: sid,
-          sequenceNum: sequenceRef.current,
-          startTime: buf.startTime,
-          endTime: buf.endTime,
-          frames: buf.frames,
-          events: buf.events,
-        });
-        navigator.sendBeacon('/api/telemetry/batch', batchPayload);
+        for (let i = 0; i < buf.frames.length; i += BEACON_CHUNK_SIZE) {
+          sequenceRef.current++;
+          const chunk = buf.frames.slice(i, i + BEACON_CHUNK_SIZE);
+          const payload = new Blob([JSON.stringify({
+            sessionId: sid,
+            sequenceNum: sequenceRef.current,
+            startTime: chunk[0].timestamp,
+            endTime: chunk[chunk.length - 1].timestamp,
+            frames: chunk,
+            events: i === 0 ? buf.events : [],
+          })], { type: 'application/json' });
+          navigator.sendBeacon('/api/telemetry/batch', payload);
+        }
       }
 
+      // Session summary is small, always fits
       const durationSec = (stats.lastTimestamp - stats.firstTimestamp) / 1000;
-      const summary = JSON.stringify({
+      const summaryBlob = new Blob([JSON.stringify({
         sessionId: sid,
         startTime: stats.firstTimestamp,
         endTime: stats.lastTimestamp,
@@ -209,8 +257,8 @@ export function useBatchTelemetry(config: BatchConfig): BatchTelemetryResult {
         totalBatches: sequenceRef.current,
         avgSampleRateFps: durationSec > 0 ? stats.totalFrames / durationSec : 0,
         eventBreakdown: stats.eventBreakdown,
-      });
-      navigator.sendBeacon('/api/telemetry/session-end', summary);
+      })], { type: 'application/json' });
+      navigator.sendBeacon('/api/telemetry/session-end', summaryBlob);
     };
 
     window.addEventListener('beforeunload', handleUnload);

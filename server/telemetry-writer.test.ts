@@ -61,6 +61,28 @@ describe('writeBatch', () => {
       'Invalid sessionId',
     );
   });
+
+  it('rejects sessionId with special characters', async () => {
+    await expect(writeBatch(config, makeBatch({ sessionId: 'has space' }))).rejects.toThrow('Invalid sessionId');
+    await expect(writeBatch(config, makeBatch({ sessionId: '' }))).rejects.toThrow('Invalid sessionId');
+    await expect(writeBatch(config, makeBatch({ sessionId: '.' }))).rejects.toThrow('Invalid sessionId');
+  });
+
+  it('rejects invalid sequenceNum', async () => {
+    await expect(writeBatch(config, makeBatch({ sequenceNum: -1 }))).rejects.toThrow('Invalid sequenceNum');
+    await expect(writeBatch(config, makeBatch({ sequenceNum: 1.5 }))).rejects.toThrow('Invalid sequenceNum');
+    await expect(writeBatch(config, makeBatch({ sequenceNum: NaN }))).rejects.toThrow('Invalid sequenceNum');
+  });
+
+  it('writes compact JSON for batches', async () => {
+    await writeBatch(config, makeBatch());
+    const content = await readFile(
+      join(tempDir, '2026-04-02', 'test-session-abc', 'batch-001.json'),
+      'utf-8',
+    );
+    // Compact JSON has no newlines except none
+    expect(content.includes('\n')).toBe(false);
+  });
 });
 
 describe('writeSessionSummary', () => {
