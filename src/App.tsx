@@ -62,13 +62,15 @@ export default function App() {
   const grabOffsetLeftRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // --- Shake-to-clear detection ---
-  const shakeHistoryRef = useRef<{ directions: number[]; lastClearTime: number }>({
-    directions: [],
+  // Simple approach: count consecutive high-velocity frames. Your telemetry shows
+  // sustained velocity spikes every ~300ms when shaking. 5 fast frames in a row = shake.
+  const shakeRef = useRef<{ fastFrames: number; lastClearTime: number }>({
+    fastFrames: 0,
     lastClearTime: 0,
   });
-  const SHAKE_CLEAR_VELOCITY = 0.3;
-  const SHAKE_CLEAR_REVERSALS = 4;
-  const SHAKE_CLEAR_DEBOUNCE_MS = 2000;
+  const SHAKE_SPEED_THRESHOLD = 0.3;    // ~360px/s — your shakes are 500-2000px/s
+  const SHAKE_FRAMES_NEEDED = 5;        // 5 fast frames in a row (~150ms at 30fps)
+  const SHAKE_CLEAR_DEBOUNCE_MS = 1500;
   const shakeClearingRef = useRef(false);
 
   // --- Per-hand grip state ---
@@ -163,39 +165,28 @@ export default function App() {
     recordBatch(hands, physics, grips, motions, now);
     processFrame(hands, physics, grips, motions, now);
 
-    // --- Shake-to-clear: only when TWO hands ---
-    if (hands.length >= 2 && physics.length > 0 && now - shakeHistoryRef.current.lastClearTime > SHAKE_CLEAR_DEBOUNCE_MS) {
+    // --- Shake-to-clear: count consecutive fast frames ---
+    if (physics.length > 0 && now - shakeRef.current.lastClearTime > SHAKE_CLEAR_DEBOUNCE_MS) {
       const maxSpeed = Math.max(...physics.map((p) => magnitude3(p.palmVelocity)));
-      if (maxSpeed > SHAKE_CLEAR_VELOCITY) {
-        const fastestHand = physics.reduce((a, b) =>
-          magnitude3(a.palmVelocity) > magnitude3(b.palmVelocity) ? a : b
-        );
-        const dir = Math.atan2(fastestHand.palmVelocity.y, fastestHand.palmVelocity.x);
-        const hist = shakeHistoryRef.current.directions;
-        hist.push(dir);
-        if (hist.length > 15) hist.shift();
 
-        let reversals = 0;
-        for (let j = 2; j < hist.length; j++) {
-          const prev = hist[j - 1] - hist[j - 2];
-          const curr = hist[j] - hist[j - 1];
-          if (prev * curr < 0 && Math.abs(curr) > 0.3) reversals++;
-        }
-
-        if (reversals >= SHAKE_CLEAR_REVERSALS && objects.length > 0 && !shakeClearingRef.current) {
-          shakeClearingRef.current = true;
-          shakeHistoryRef.current.lastClearTime = now;
-          shakeHistoryRef.current.directions = [];
-          const ids = objects.map((o) => o.id);
-          ids.forEach((id, i) => {
-            setTimeout(() => {
-              removeObject(id);
-              if (i === ids.length - 1) shakeClearingRef.current = false;
-            }, i * 150);
-          });
-        }
+      if (maxSpeed > SHAKE_SPEED_THRESHOLD) {
+        shakeRef.current.fastFrames++;
       } else {
-        if (shakeHistoryRef.current.directions.length > 0) shakeHistoryRef.current.directions.pop();
+        // Decay slowly — allow brief dips between oscillations
+        if (shakeRef.current.fastFrames > 0) shakeRef.current.fastFrames--;
+      }
+
+      if (shakeRef.current.fastFrames >= SHAKE_FRAMES_NEEDED && objects.length > 0 && !shakeClearingRef.current) {
+        shakeClearingRef.current = true;
+        shakeRef.current.lastClearTime = now;
+        shakeRef.current.fastFrames = 0;
+        const ids = objects.map((o) => o.id);
+        ids.forEach((id, i) => {
+          setTimeout(() => {
+            removeObject(id);
+            if (i === ids.length - 1) shakeClearingRef.current = false;
+          }, i * 80);
+        });
       }
     }
 
