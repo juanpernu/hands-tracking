@@ -12,6 +12,9 @@ import { DualHandHUD } from './components/telemetry/DualHandHUD';
 import { GestureTimeline } from './components/telemetry/GestureTimeline';
 import { EventLog } from './components/telemetry/EventLog';
 import GripIndicator from './components/telemetry/GripIndicator';
+import { SpatialHighlight } from './components/SpatialHighlight';
+import { SpatialProximityFeedback } from './components/SpatialProximityFeedback';
+import { SpatialHUD } from './components/telemetry/SpatialHUD';
 import { useHandTracking } from './hooks/useHandTracking';
 import { useGestureDetection } from './hooks/useGestureDetection';
 import { useMouseFallback } from './hooks/useMouseFallback';
@@ -108,6 +111,10 @@ export default function App() {
         : event.type,
       data: event.detail,
     });
+    setSpatialEventLog((prev) => {
+      const next = [...prev, event];
+      return next.length > 20 ? next.slice(-20) : next;
+    });
   }, [addEntry]);
 
   handOverDOM.onSpatialEvent.current = addSpatialLogEntry;
@@ -117,6 +124,7 @@ export default function App() {
   const [telemetryVisible, setTelemetryVisible] = useState(true);
   const [fps, setFps] = useState(0);
   const [flashActive, setFlashActive] = useState(false);
+  const [spatialEventLog, setSpatialEventLog] = useState<SpatialEvent[]>([]);
 
   // --- Refs ---
   const cursorRef = useRef<HTMLDivElement>(null);
@@ -464,6 +472,16 @@ export default function App() {
         visible={telemetryVisible && hands.length > 0}
       />
 
+      {/* Spatial feedback overlays */}
+      <SpatialHighlight
+        handSpatialRef={handOverDOM.handSpatialRef}
+        visible={true}
+      />
+      <SpatialProximityFeedback
+        feedbackRef={spatialFeedback.feedbackRef}
+        visible={true}
+      />
+
       {/* Telemetry overlay — press T */}
       <ErrorBoundary inline fallbackLabel="Telemetry error">
         <TelemetryOverlay
@@ -532,6 +550,13 @@ export default function App() {
               gripData={gripData}
               motionData={motionData}
               fps={fps}
+            />
+          </DraggablePanel>
+
+          <DraggablePanel initialX={20} initialY={H - 280} handCursors={panelHandCursors}>
+            <SpatialHUD
+              handSpatialRef={handOverDOM.handSpatialRef}
+              spatialEvents={spatialEventLog}
             />
           </DraggablePanel>
         </>
