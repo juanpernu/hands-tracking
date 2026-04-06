@@ -19,7 +19,9 @@ export type AgentGestureType =
   | 'grip-thumbs-up'
   | 'grip-thumbs-down'
   | 'grip-peace'
-  | 'grip-call-me';
+  | 'grip-call-me'
+  | 'pinch-hold'
+  | 'wave';
 
 export interface AgentGestureEvent {
   type: AgentGestureType;

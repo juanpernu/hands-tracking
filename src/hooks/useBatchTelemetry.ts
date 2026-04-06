@@ -8,6 +8,7 @@ import type {
   GestureEvent,
 } from '../types/telemetry';
 import type { SpatialTelemetryData } from '../types/spatial';
+import type { HandFeatureVector } from '../types/features';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,6 +39,7 @@ interface BatchTelemetryResult {
     motions: MotionPattern[],
     timestamp: number,
     spatialData?: ReadonlyMap<string, SpatialTelemetryData>,
+    features?: HandFeatureVector[],
   ) => void;
   sessionId: string;
   batchCount: number;
@@ -57,7 +59,7 @@ interface PendingBatch {
 
 const MAX_RETRIES = 3;
 const MAX_RETRY_QUEUE = 10;
-const BEACON_CHUNK_SIZE = 15; // ~15 frames * ~3KB = ~45KB, well under sendBeacon's 64KB limit
+const BEACON_CHUNK_SIZE = 8; // ~8 frames * ~6KB (with features) = ~48KB, under sendBeacon's 64KB limit
 const DEFAULT_MAX_FRAMES = 500;
 const DEFAULT_MAX_INTERVAL_MS = 10_000;
 
@@ -176,6 +178,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
       motions: MotionPattern[],
       timestamp: number,
       spatialData?: ReadonlyMap<string, SpatialTelemetryData>,
+      features?: HandFeatureVector[],
     ) => {
       if (!enabled) return;
 
@@ -191,6 +194,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
 
         const frameId = frameCounterRef.current++;
         const spatial = spatialData?.get(hand.handedness);
+        const feature = features?.find((f) => f.handedness === hand.handedness);
         const frame: HandTelemetry = {
           frameId,
           timestamp,
@@ -201,6 +205,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
           grip: g,
           motion: m,
           ...(spatial ? { spatial } : {}),
+          ...(feature ? { features: feature } : {}),
         };
 
         buf.frames.push(frame);
@@ -256,12 +261,14 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
         for (let i = 0; i < buf.frames.length; i += BEACON_CHUNK_SIZE) {
           sequenceRef.current++;
           const chunk = buf.frames.slice(i, i + BEACON_CHUNK_SIZE);
+          // Strip features to stay under sendBeacon's 64KB limit
+          const slimFrames = chunk.map(f => ({ ...f, features: undefined }));
           const payload = new Blob([JSON.stringify({
             sessionId: sid,
             sequenceNum: sequenceRef.current,
             startTime: Math.round(chunk[0].timestamp + offset),
             endTime: Math.round(chunk[chunk.length - 1].timestamp + offset),
-            frames: chunk,
+            frames: slimFrames,
             events: i === 0 ? buf.events : [],
           })], { type: 'application/json' });
           navigator.sendBeacon('/api/telemetry/batch', payload);
