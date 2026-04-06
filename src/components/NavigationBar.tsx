@@ -160,7 +160,7 @@ const NavigationBar = memo(
             src={iframeUrl}
             style={iframeStyle}
             title="NavigationBar iframe"
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+            referrerPolicy="no-referrer"
             onLoad={() => setIsLoading(false)}
           />
         )}
@@ -261,7 +261,7 @@ const iframeStyle: React.CSSProperties = {
   inset: 0,
   width: '100vw',
   height: '100vh',
-  zIndex: -1,
+  zIndex: 1,
   border: 'none',
 };
 
