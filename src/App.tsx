@@ -352,17 +352,7 @@ export default function App() {
       },
     );
 
-    // 5.3.5 Detect grab release → trigger momentum
-    if (prevGrabbedIdRef.current && !currentGrabbedRight) {
-      releaseObject(prevGrabbedIdRef.current);
-    }
-    if (prevGrabbedIdLeftRef.current && !currentGrabbedLeft) {
-      releaseObject(prevGrabbedIdLeftRef.current);
-    }
-    prevGrabbedIdRef.current = currentGrabbedRight;
-    prevGrabbedIdLeftRef.current = currentGrabbedLeft;
-
-    // Apply momentum to released objects
+    // Apply momentum to released objects (runs every frame for smooth physics)
     applyMomentum();
 
     // 5.4 Depth tracking
@@ -399,6 +389,16 @@ export default function App() {
     } else {
       spatialFeedback.clearDrag('Left');
     }
+
+    // Detect grab release → trigger momentum
+    if (prevGrabbedIdRef.current && !currentGrabbedRight) {
+      releaseObject(prevGrabbedIdRef.current);
+    }
+    if (prevGrabbedIdLeftRef.current && !currentGrabbedLeft) {
+      releaseObject(prevGrabbedIdLeftRef.current);
+    }
+    prevGrabbedIdRef.current = currentGrabbedRight;
+    prevGrabbedIdLeftRef.current = currentGrabbedLeft;
 
     // Clear spatial state for hands that disappeared
     if (currentHands.length === 0) {
