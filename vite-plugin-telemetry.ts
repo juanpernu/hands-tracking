@@ -101,7 +101,14 @@ export default function telemetryPlugin(options: TelemetryPluginOptions = {}): P
           });
 
           // Copy headers, stripping iframe-blocking ones
-          const blocked = new Set(['x-frame-options', 'content-security-policy', 'content-security-policy-report-only']);
+          const blocked = new Set([
+            'x-frame-options',
+            'content-security-policy',
+            'content-security-policy-report-only',
+            'cross-origin-embedder-policy',
+            'cross-origin-opener-policy',
+            'cross-origin-resource-policy',
+          ]);
           const headers: Record<string, string> = {};
           upstream.headers.forEach((value, key) => {
             if (!blocked.has(key.toLowerCase())) {
