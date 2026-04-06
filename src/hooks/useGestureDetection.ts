@@ -65,26 +65,33 @@ export function useGestureDetection() {
     }
 
     // --- Per-hand pinch / spread detection ---
+    // Detects both two-finger pinch (thumb+index) and three-finger pinch
+    // (thumb+index+middle). Uses the minimum distance between fingertip pairs.
     const pinchResults = hands.map((hand) => {
       const thumb = hand.landmarks[LANDMARK.THUMB_TIP];
       const index = hand.landmarks[LANDMARK.INDEX_TIP];
-      const dist = distance(thumb, index);
+      const middle = hand.landmarks[LANDMARK.MIDDLE_TIP];
+
+      const thumbIndexDist = distance(thumb, index);
+      const thumbMiddleDist = middle ? distance(thumb, middle) : Infinity;
+
+      // Use the minimum distance — if ANY two of the three tips are close, it's a pinch
+      const minDist = Math.min(thumbIndexDist, thumbMiddleDist);
       const key = hand.handedness;
 
       const wasPinching = pinchStateRef.current[key] ?? false;
 
       let isPinching: boolean;
       if (wasPinching) {
-        // Already pinching — only exit when clearly above the exit threshold
-        isPinching = dist < GESTURE.PINCH_EXIT_THRESHOLD;
+        isPinching = minDist < GESTURE.PINCH_EXIT_THRESHOLD;
       } else {
-        // Not pinching — only enter when clearly below the enter threshold
-        isPinching = dist < GESTURE.PINCH_ENTER_THRESHOLD;
+        isPinching = minDist < GESTURE.PINCH_ENTER_THRESHOLD;
       }
 
       pinchStateRef.current[key] = isPinching;
 
-      const isSpreading = dist > GESTURE.SPREAD_THRESHOLD;
+      // Spread uses thumb-index only (wider gesture)
+      const isSpreading = thumbIndexDist > GESTURE.SPREAD_THRESHOLD;
 
       return { isPinching, isSpreading };
     });

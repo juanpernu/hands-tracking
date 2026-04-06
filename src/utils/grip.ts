@@ -60,17 +60,28 @@ export function classifyGrip(
     return 'open';
   }
 
-  // Pinch: thumb + index extended, others curled, and tips close together.
-  if (
-    thumbCurl < GRIP.PINCH_OPEN_THRESHOLD &&
-    indexCurl < GRIP.PINCH_OPEN_THRESHOLD &&
-    middleCurl > GRIP.PINCH_CURL_THRESHOLD &&
-    ringCurl > GRIP.PINCH_CURL_THRESHOLD &&
-    pinkyCurl > GRIP.PINCH_CURL_THRESHOLD
-  ) {
-    const thumbTip = landmarks[LANDMARK.THUMB_TIP];
-    const indexTip = landmarks[LANDMARK.INDEX_TIP];
-    if (thumbTip && indexTip && distance3d(thumbTip, indexTip) < GRIP.PINCH_TIP_DISTANCE) {
+  // Pinch: detected by fingertip proximity, not finger curl.
+  // Three-finger pinch (thumb + index + middle tips close) or
+  // two-finger pinch (thumb + index tips close).
+  // This is more robust than curl-based detection for natural hand poses.
+  const thumbTip = landmarks[LANDMARK.THUMB_TIP];
+  const indexTip = landmarks[LANDMARK.INDEX_TIP];
+  const middleTip = landmarks[LANDMARK.MIDDLE_TIP];
+
+  if (thumbTip && indexTip) {
+    const thumbIndexDist = distance3d(thumbTip, indexTip);
+    const thumbMiddleDist = middleTip ? distance3d(thumbTip, middleTip) : Infinity;
+    const indexMiddleDist = middleTip ? distance3d(indexTip, middleTip) : Infinity;
+
+    // Three-finger pinch: all three tips within threshold
+    const threeFingerPinch = thumbIndexDist < GRIP.PINCH_TIP_DISTANCE
+      && thumbMiddleDist < GRIP.PINCH_TIP_DISTANCE
+      && indexMiddleDist < GRIP.PINCH_TIP_DISTANCE;
+
+    // Two-finger pinch: thumb + index close
+    const twoFingerPinch = thumbIndexDist < GRIP.PINCH_TIP_DISTANCE;
+
+    if (threeFingerPinch || twoFingerPinch) {
       return 'pinch';
     }
   }
