@@ -124,7 +124,7 @@ export default function App() {
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
   const { log, processFrame, addEntry, clearLog, exportLog, onClapRef } = useTelemetryLogger();
-  const { record: recordBatch } = useBatchTelemetry();
+  const { record: recordBatch, recordEvent: recordBatchEvent } = useBatchTelemetry();
 
   // --- Spatial tracking hooks ---
   const spatialIndex = useDOMSpatialIndex();
@@ -202,22 +202,25 @@ export default function App() {
       const next = [...prev, entry];
       return next.length > 15 ? next.slice(-15) : next;
     });
-    // Persist to telemetry
-    addEntry({
+    // Persist to telemetry (in-memory log + batch file)
+    const eventData = {
       type: 'gesture-detected',
       timestamp: performance.now(),
+      gesture: event.type,
+      spatial: selector,
+      hands: event.hands.length,
+      grip: event.grip?.[0]?.gripType,
+    };
+    addEntry({
+      type: 'gesture-detected',
+      timestamp: eventData.timestamp,
       description: `${event.type}${selector ? ` on ${selector}` : ''}`,
-      data: {
-        gesture: event.type,
-        spatial: selector,
-        hands: event.hands.length,
-        physics: event.physics?.[0]?.palmVelocity,
-        grip: event.grip?.[0]?.gripType,
-      },
+      data: eventData,
     });
+    recordBatchEvent(eventData);
     // Still call the original handler
     originalHandleRef.current(event);
-  }, [handOverDOM, addEntry]);
+  }, [handOverDOM, addEntry, recordBatchEvent]);
 
   // --- Interaction controller (depends on interpreter.handle) ---
   const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake, updateMotion } =
@@ -600,14 +603,16 @@ export default function App() {
     );
     const entry = gestureFeedbackLog.find((e) => e.id === id);
     if (entry) {
+      const eventData = { type: 'gesture-confirm', timestamp: performance.now(), gesture: entry.gesture, spatial: entry.spatial };
       addEntry({
         type: 'gesture-confirm',
-        timestamp: performance.now(),
+        timestamp: eventData.timestamp,
         description: `Confirmed: ${entry.gesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
-        data: { gesture: entry.gesture, spatial: entry.spatial },
+        data: eventData,
       });
+      recordBatchEvent(eventData);
     }
-  }, [gestureFeedbackLog, addEntry]);
+  }, [gestureFeedbackLog, addEntry, recordBatchEvent]);
 
   const handleGestureCorrect = useCallback((id: number, correctGesture: string) => {
     setGestureFeedbackLog((prev) =>
@@ -615,14 +620,16 @@ export default function App() {
     );
     const entry = gestureFeedbackLog.find((e) => e.id === id);
     if (entry) {
+      const eventData = { type: 'gesture-correction', timestamp: performance.now(), detected: entry.gesture, correct: correctGesture, spatial: entry.spatial };
       addEntry({
         type: 'gesture-correction',
-        timestamp: performance.now(),
+        timestamp: eventData.timestamp,
         description: `Correction: ${entry.gesture} → ${correctGesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
-        data: { detected: entry.gesture, correct: correctGesture, spatial: entry.spatial },
+        data: eventData,
       });
+      recordBatchEvent(eventData);
     }
-  }, [gestureFeedbackLog, addEntry]);
+  }, [gestureFeedbackLog, addEntry, recordBatchEvent]);
 
   // Clap → send to gesture interpreter only (no screenshot)
   useEffect(() => {

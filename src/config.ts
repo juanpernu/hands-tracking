@@ -25,8 +25,8 @@ export const FINGER_CHAINS = [
 
 // --- Gesture Detection ---
 export const GESTURE = {
-  PINCH_ENTER_THRESHOLD: 0.07,
-  PINCH_EXIT_THRESHOLD: 0.10,
+  PINCH_ENTER_THRESHOLD: 0.05,
+  PINCH_EXIT_THRESHOLD: 0.08,
   SPREAD_THRESHOLD: 0.3,
   LERP_FACTOR: 0.3,
 } as const;
@@ -38,8 +38,8 @@ export const GRIP = {
   OPEN_THRESHOLD: 0.3,
   PINCH_OPEN_THRESHOLD: 0.3,
   PINCH_CURL_THRESHOLD: 0.15,
-  PINCH_TIP_DISTANCE: 0.07,
-  PINCH_SUSTAIN_FRAMES: 3,   // must hold proximity for N frames to confirm pinch
+  PINCH_TIP_DISTANCE: 0.05,
+  PINCH_SUSTAIN_FRAMES: 2,   // must hold proximity for N frames to confirm pinch
   POINT_OPEN_THRESHOLD: 0.3,
   POINT_CURL_THRESHOLD: 0.6,
   NON_THUMB_FINGER_COUNT: 4,

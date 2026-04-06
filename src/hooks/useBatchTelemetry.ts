@@ -39,6 +39,7 @@ interface BatchTelemetryResult {
     timestamp: number,
     spatialData?: ReadonlyMap<string, SpatialTelemetryData>,
   ) => void;
+  recordEvent: (event: Record<string, unknown>) => void;
   sessionId: string;
   batchCount: number;
   pendingFrames: number;
@@ -287,8 +288,18 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
     return () => window.removeEventListener('beforeunload', handleUnload);
   }, []);
 
+  // Record a gesture/feedback event into the current batch
+  const recordEvent = useCallback((event: Record<string, unknown>) => {
+    if (!enabled) return;
+    bufferRef.current.events.push(event as unknown as GestureEvent);
+    statsRef.current.totalEvents++;
+    const eventType = String(event.type ?? 'unknown');
+    statsRef.current.eventBreakdown[eventType] = (statsRef.current.eventBreakdown[eventType] ?? 0) + 1;
+  }, [enabled]);
+
   return {
     record,
+    recordEvent,
     sessionId,
     batchCount,
     pendingFrames,
