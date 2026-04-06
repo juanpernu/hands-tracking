@@ -273,8 +273,8 @@ export default function App() {
     }
 
     // Record telemetry
-    record(currentHands, physics, grips, motions, now, spatialMap);
-    recordBatch(currentHands, physics, grips, motions, now, spatialMap);
+    record(currentHands, physics, grips, motions, now, spatialMap, features);
+    recordBatch(currentHands, physics, grips, motions, now, spatialMap, features);
     processFrame(currentHands, physics, grips, motions, now, features);
 
     // 3. Shake-to-clear + swipe detection
