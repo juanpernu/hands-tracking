@@ -53,6 +53,8 @@ import TapRipple from './components/TapRipple';
 import type { TapRippleHandle } from './components/TapRipple';
 import { NavigationBar } from './components/NavigationBar';
 import type { NavigationBarHandle } from './components/NavigationBar';
+import { useDepthTracking } from './hooks/useDepthTracking';
+import { DepthIndicator } from './components/DepthIndicator';
 import { NAV_BAR } from './config';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
@@ -241,6 +243,9 @@ export default function App() {
   // --- Tap detection ---
   const { detect: detectTap } = useTapDetection();
 
+  // --- Depth tracking ---
+  const { update: updateDepth, stateRef: depthRef } = useDepthTracking();
+
   // Ring buffer for timeline entries (never reallocated)
   const timelineBufferRef = useRef<TimelineRingBuffer>(makeTimelineBuffer());
   // Throttled reactive copy of timeline for rendering
@@ -341,6 +346,9 @@ export default function App() {
         H: currentH,
       },
     );
+
+    // 5.4 Depth tracking
+    updateDepth(currentHands);
 
     // 5.5 Spatial tracking — runs independently of interaction result
     // Track each hand's position over DOM elements
@@ -452,7 +460,11 @@ export default function App() {
     }
 
     // 6.7 Velocity-based scroll — palm movement directly drives iframe scroll
-    if (physics.length > 0) {
+    // Only active when hand is in optimal depth zone (calibrated)
+    const depthState = depthRef.current.right ?? depthRef.current.left;
+    const inOptimalZone = depthState?.zone === 'optimal' || depthState?.zone === 'calibrating';
+
+    if (physics.length > 0 && inOptimalZone) {
       const primaryPhys = physics[0];
       if (primaryPhys) {
         const vy = primaryPhys.palmVelocity.y;
@@ -510,6 +522,7 @@ export default function App() {
     handOverDOM,
     spatialFeedback,
     detectTap,
+    updateDepth,
   ]);
 
   // Store latest runFrame in a ref so the RAF loop always calls the latest version
@@ -639,6 +652,9 @@ export default function App() {
 
       {/* Tap ripple feedback */}
       <TapRipple ref={tapRippleRef} />
+
+      {/* Depth indicator */}
+      <DepthIndicator depthRef={depthRef} visible={true} />
 
       {/* Objects + cursor */}
       {objects.map((obj) => (
