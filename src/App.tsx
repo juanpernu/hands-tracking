@@ -46,6 +46,9 @@ import {
 import type { GestureMapping } from './agent/types';
 import type { ActionIntent, ActionResult } from './plugins/types';
 import type { SpatialEvent, SpatialTelemetryData } from './types/spatial';
+import { useTapDetection } from './hooks/useTapDetection';
+import TapRipple from './components/TapRipple';
+import type { TapRippleHandle } from './components/TapRipple';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
 
@@ -191,7 +194,11 @@ export default function App() {
   const leftCursorRef = useRef<HTMLDivElement>(null);
   const leftCursorSmoothed = useRef({ x: 0, y: 0, initialized: false });
   const gripIndicatorRef = useRef<HTMLDivElement>(null);
+  const tapRippleRef = useRef<TapRippleHandle>(null);
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
+
+  // --- Tap detection ---
+  const { detect: detectTap } = useTapDetection();
 
   // Ring buffer for timeline entries (never reallocated)
   const timelineBufferRef = useRef<TimelineRingBuffer>(makeTimelineBuffer());
@@ -367,6 +374,18 @@ export default function App() {
       }
     }
 
+    // 6.5 Tap detection — double-tap dispatches native click + ripple
+    const taps = detectTap(currentHands, now);
+    for (const tap of taps) {
+      const px = (1 - tap.position.x) * currentW;
+      const py = tap.position.y * currentH;
+      const el = document.elementFromPoint(px, py);
+      if (el && el instanceof HTMLElement) {
+        el.click();
+        tapRippleRef.current?.trigger(px, py);
+      }
+    }
+
     // 7. Update timeline ring buffer
     const primaryPhysics = physics[0];
     const primarySpeed = primaryPhysics ? magnitude3(primaryPhysics.palmVelocity) * currentW : 0;
@@ -400,6 +419,7 @@ export default function App() {
     spatialIndex,
     handOverDOM,
     spatialFeedback,
+    detectTap,
   ]);
 
   // Store latest runFrame in a ref so the RAF loop always calls the latest version
@@ -494,6 +514,9 @@ export default function App() {
         transition: edgeWarning === 'near' ? 'none' : 'border-color 300ms ease, box-shadow 300ms ease',
       }}
     >
+      {/* Tap ripple feedback */}
+      <TapRipple ref={tapRippleRef} />
+
       {/* Objects + cursor */}
       {objects.map((obj) => (
         <DraggableObject
