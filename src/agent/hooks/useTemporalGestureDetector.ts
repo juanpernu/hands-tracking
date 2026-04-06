@@ -3,6 +3,7 @@ import type { AgentGestureEvent, AgentGestureType } from '../types';
 import type { HandFeatureVector } from '../../types/features';
 import type { UseTemporalFeaturesReturn } from '../../hooks/useTemporalFeatures';
 import type { MotionPattern } from '../../types/telemetry';
+import type { HandData } from '../../types';
 
 interface DebounceState {
   lastEmitMs: number;
@@ -31,6 +32,9 @@ const WAVE_MIN_SIGN_CHANGES = 3;
 const WAVE_MIN_OPENNESS = 0.5;
 const WAVE_MIN_DURATION_MS = 500;
 
+const ROLL_DELTA_EPSILON = 0.01;
+const isSignificant = (v: number) => Math.abs(v) > ROLL_DELTA_EPSILON;
+
 export function useTemporalGestureDetector(config: TemporalGestureDetectorConfig) {
   const { temporalFeatures, onGestureEvent } = config;
 
@@ -44,93 +48,119 @@ export function useTemporalGestureDetector(config: TemporalGestureDetectorConfig
     return now - state.lastEmitMs >= cooldown;
   };
 
-  const emit = (type: AgentGestureType, now: number): void => {
+  const emit = (type: AgentGestureType, now: number, hands: HandData[]): void => {
     debounceRef.current[type] = { lastEmitMs: now };
     onGestureEvent({
       type,
-      hands: [],
+      hands,
       timestamp: now,
     });
   };
 
-  const detectCircle = (handedness: 'Left' | 'Right', now: number): boolean => {
-    const window = temporalFeatures.getWindow(handedness);
-    if (window.length < CIRCLE_MIN_FRAMES) return false;
-
-    const first = window[0];
-    const last = window[window.length - 1];
-    if (last.timestamp - first.timestamp < CIRCLE_MIN_DURATION_MS) return false;
-
-    // Check motion data for circular pattern
+  const detectCircle = (now: number, hands: HandData[]): boolean => {
+    // Circle detection checks if ANY motion pattern is circular with sufficient confidence.
+    // Circle is inherently a single-hand gesture, so we emit once per detect() call.
     const motions = motionRef.current;
-    const motion = motions.find(m => m.handedness === handedness);
+    const motion = motions.find(m => m.type === 'circular' && m.confidence >= CIRCLE_MIN_CONFIDENCE);
     if (!motion) return false;
-    if (motion.type !== 'circular' || motion.confidence < CIRCLE_MIN_CONFIDENCE) return false;
+
+    // Verify we have enough temporal data from either hand
+    let hasEnoughFrames = false;
+    for (const h of (['Left', 'Right'] as const)) {
+      let frameCount = 0;
+      let firstTs = Infinity;
+      let lastTs = 0;
+      temporalFeatures.forEachInWindow(h, (frame, _i, total) => {
+        frameCount = total;
+        if (frame.timestamp < firstTs) firstTs = frame.timestamp;
+        if (frame.timestamp > lastTs) lastTs = frame.timestamp;
+      });
+      if (frameCount >= CIRCLE_MIN_FRAMES && lastTs - firstTs >= CIRCLE_MIN_DURATION_MS) {
+        hasEnoughFrames = true;
+        break;
+      }
+    }
+    if (!hasEnoughFrames) return false;
 
     if (!canEmit('circular', now)) return false;
-    emit('circular', now);
+    emit('circular', now, hands);
     return true;
   };
 
-  const detectPinchHold = (handedness: 'Left' | 'Right', now: number): boolean => {
-    const window = temporalFeatures.getWindow(handedness);
-    if (window.length < PINCH_HOLD_MIN_FRAMES) return false;
-
-    // Check the last PINCH_HOLD_MIN_FRAMES frames for sustained pinch
-    const startIdx = window.length - PINCH_HOLD_MIN_FRAMES;
+  const detectPinchHold = (handedness: 'Left' | 'Right', now: number, hands: HandData[]): boolean => {
+    // Count frames and collect the last PINCH_HOLD_MIN_FRAMES values in-place
+    let totalFrames = 0;
     let sum = 0;
     let sumSq = 0;
+    let count = 0;
+    let aboveThreshold = false;
 
-    for (let i = startIdx; i < window.length; i++) {
-      const val = window[i].thumbOpposition[0];
-      if (val >= PINCH_HOLD_THRESHOLD) return false; // Must stay below threshold
+    // First pass: count total frames
+    temporalFeatures.forEachInWindow(handedness, (_frame, _i, total) => {
+      totalFrames = total;
+    });
+    if (totalFrames < PINCH_HOLD_MIN_FRAMES) return false;
+
+    const startIdx = totalFrames - PINCH_HOLD_MIN_FRAMES;
+
+    temporalFeatures.forEachInWindow(handedness, (frame, i) => {
+      if (i < startIdx) return;
+      const val = frame.thumbOpposition[0];
+      if (val >= PINCH_HOLD_THRESHOLD) {
+        aboveThreshold = true;
+        return;
+      }
       sum += val;
       sumSq += val * val;
-    }
+      count++;
+    });
 
-    const count = PINCH_HOLD_MIN_FRAMES;
+    if (aboveThreshold || count < PINCH_HOLD_MIN_FRAMES) return false;
+
     const mean = sum / count;
-    const variance = sumSq / count - mean * mean;
+    const variance = Math.max(0, sumSq / count - mean * mean);
     if (variance >= PINCH_HOLD_MAX_VARIANCE) return false;
 
     if (!canEmit('pinch-hold', now)) return false;
-    emit('pinch-hold', now);
+    emit('pinch-hold', now, hands);
     return true;
   };
 
-  const detectWave = (handedness: 'Left' | 'Right', now: number): boolean => {
-    const window = temporalFeatures.getWindow(handedness);
-    if (window.length < 10) return false;
-
-    const first = window[0];
-    const last = window[window.length - 1];
-    if (last.timestamp - first.timestamp < WAVE_MIN_DURATION_MS) return false;
-
-    // Check hand openness — must be open
+  const detectWave = (handedness: 'Left' | 'Right', now: number, hands: HandData[]): boolean => {
+    let totalFrames = 0;
+    let firstTs = Infinity;
+    let lastTs = 0;
     let opennessSum = 0;
-    for (let i = 0; i < window.length; i++) {
-      opennessSum += window[i].handOpenness;
-    }
-    if (opennessSum / window.length < WAVE_MIN_OPENNESS) return false;
-
-    // Count sign changes in palmRoll between consecutive frames
     let signChanges = 0;
     let prevDelta = 0;
+    let prevRoll: number | null = null;
 
-    for (let i = 1; i < window.length; i++) {
-      const delta = window[i].palmOrientation.roll - window[i - 1].palmOrientation.roll;
-      if (prevDelta !== 0 && delta !== 0) {
-        if ((prevDelta > 0 && delta < 0) || (prevDelta < 0 && delta > 0)) {
-          signChanges++;
+    temporalFeatures.forEachInWindow(handedness, (frame, _i, total) => {
+      totalFrames = total;
+      if (frame.timestamp < firstTs) firstTs = frame.timestamp;
+      if (frame.timestamp > lastTs) lastTs = frame.timestamp;
+      opennessSum += frame.handOpenness;
+
+      const roll = frame.palmOrientation.roll;
+      if (prevRoll !== null) {
+        const delta = roll - prevRoll;
+        if (isSignificant(prevDelta) && isSignificant(delta)) {
+          if ((prevDelta > 0 && delta < 0) || (prevDelta < 0 && delta > 0)) {
+            signChanges++;
+          }
         }
+        if (isSignificant(delta)) prevDelta = delta;
       }
-      if (delta !== 0) prevDelta = delta;
-    }
+      prevRoll = roll;
+    });
 
+    if (totalFrames < 10) return false;
+    if (lastTs - firstTs < WAVE_MIN_DURATION_MS) return false;
+    if (opennessSum / totalFrames < WAVE_MIN_OPENNESS) return false;
     if (signChanges < WAVE_MIN_SIGN_CHANGES) return false;
 
     if (!canEmit('wave', now)) return false;
-    emit('wave', now);
+    emit('wave', now, hands);
     return true;
   };
 
@@ -138,15 +168,25 @@ export function useTemporalGestureDetector(config: TemporalGestureDetectorConfig
     motionRef.current = motions;
   }, []);
 
-  const detect = useCallback(() => {
+  const detect = useCallback((hands: HandData[]) => {
     const now = performance.now();
-    const handedness: ('Left' | 'Right')[] = ['Left', 'Right'];
 
-    for (const h of handedness) {
-      // Priority order: circle, pinch-hold, wave
-      if (detectCircle(h, now)) continue;
-      if (detectPinchHold(h, now)) continue;
-      detectWave(h, now);
+    // M4: Clear stale motion data when no hands are present
+    if (hands.length === 0) {
+      motionRef.current = [];
+      return;
+    }
+
+    // Circle detection is hand-agnostic — check once
+    if (detectCircle(now, hands)) {
+      // Circle found; skip per-hand detection for this frame
+    } else {
+      const handedness: ('Left' | 'Right')[] = ['Left', 'Right'];
+      for (const h of handedness) {
+        // Priority order: pinch-hold, wave
+        if (detectPinchHold(h, now, hands)) continue;
+        detectWave(h, now, hands);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [temporalFeatures, onGestureEvent]);

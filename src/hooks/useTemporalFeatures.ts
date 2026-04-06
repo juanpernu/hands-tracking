@@ -17,8 +17,13 @@ export interface TemporalStats {
 export interface UseTemporalFeaturesReturn {
   /** Push a frame into the temporal buffer. Call every frame. */
   push: (features: HandFeatureVector[]) => void;
-  /** Get the current window for a hand */
+  /** Get the current window for a hand (allocates — use forEachInWindow in hot paths) */
   getWindow: (handedness: 'Left' | 'Right') => HandFeatureVector[];
+  /** Iterate over the window in-place without allocating. Use in hot paths (detectors). */
+  forEachInWindow: (
+    handedness: 'Left' | 'Right',
+    visitor: (frame: HandFeatureVector, index: number, total: number) => void,
+  ) => void;
   /** Get aggregate temporal stats */
   getStats: (handedness: 'Left' | 'Right') => TemporalStats | null;
 }
@@ -74,6 +79,19 @@ export function useTemporalFeatures(): UseTemporalFeaturesReturn {
     return result;
   }, []);
 
+  const forEachInWindow = useCallback((
+    handedness: 'Left' | 'Right',
+    visitor: (frame: HandFeatureVector, index: number, total: number) => void,
+  ): void => {
+    const buf = buffersRef.current[handedness];
+    if (!buf || buf.size === 0) return;
+    const start = buf.size < TEMPORAL_WINDOW_SIZE ? 0 : buf.head;
+    for (let i = 0; i < buf.size; i++) {
+      const frame = buf.data[(start + i) % TEMPORAL_WINDOW_SIZE];
+      if (frame) visitor(frame, i, buf.size);
+    }
+  }, []);
+
   const getStats = useCallback((handedness: 'Left' | 'Right'): TemporalStats | null => {
     const buf = buffersRef.current[handedness];
     if (!buf || buf.size === 0) return null;
@@ -101,11 +119,14 @@ export function useTemporalFeatures(): UseTemporalFeaturesReturn {
     }
 
     // Find dominant phase
+    // Tie-breaking: if counts are equal, earlier declaration wins
+    // (idle > preparation > stroke > retraction). This is intentional —
+    // idle is the safest default for ambiguous windows.
     let maxCount = idleCount;
     let dominantPhase: GesturePhase = 'idle';
     if (prepCount > maxCount) { maxCount = prepCount; dominantPhase = 'preparation'; }
     if (strokeCount > maxCount) { maxCount = strokeCount; dominantPhase = 'stroke'; }
-    if (retractCount > maxCount) { dominantPhase = 'retraction'; }
+    if (retractCount > maxCount) { maxCount = retractCount; dominantPhase = 'retraction'; }
 
     // First and last frames for deltas
     const first = ringAt(buf, 0);
@@ -131,5 +152,5 @@ export function useTemporalFeatures(): UseTemporalFeaturesReturn {
     };
   }, []);
 
-  return { push, getWindow, getStats };
+  return { push, getWindow, forEachInWindow, getStats };
 }
