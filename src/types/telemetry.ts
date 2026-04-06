@@ -1,6 +1,6 @@
 import type { Landmark } from './index';
 import type { SpatialTelemetryData } from './spatial';
-import type { GesturePhase } from './features';
+import type { GesturePhase, HandFeatureVector } from './features';
 
 // Primitives
 export interface Vec3 {
@@ -95,6 +95,7 @@ export interface HandTelemetry {
   grip: GripState;
   motion: MotionPattern;
   spatial?: SpatialTelemetryData;
+  features?: HandFeatureVector;
 }
 
 // Ring buffer
