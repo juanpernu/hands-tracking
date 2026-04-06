@@ -85,7 +85,7 @@ const NavigationBar = memo(
       if (!url) return;
       saveRecentUrl(url);
       setRecentUrls(getRecentUrls());
-      setIframeUrl(url);
+      setIframeUrl(`/api/proxy?url=${encodeURIComponent(url)}`);
       setIsLoading(true);
       setVisible(false);
       setInputValue('');

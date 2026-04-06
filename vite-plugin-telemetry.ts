@@ -81,6 +81,59 @@ export default function telemetryPlugin(options: TelemetryPluginOptions = {}): P
   return {
     name: 'vite-plugin-telemetry',
     configureServer(server) {
+      // Proxy for iframe navigation — strips X-Frame-Options and CSP headers
+      server.middlewares.use('/api/proxy', async (req, res) => {
+        const url = new URL(req.url ?? '', 'http://localhost').searchParams.get('url');
+        if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('Missing or invalid url parameter');
+          return;
+        }
+
+        try {
+          const upstream = await fetch(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.5',
+            },
+            redirect: 'follow',
+          });
+
+          // Copy headers, stripping iframe-blocking ones
+          const blocked = new Set(['x-frame-options', 'content-security-policy', 'content-security-policy-report-only']);
+          const headers: Record<string, string> = {};
+          upstream.headers.forEach((value, key) => {
+            if (!blocked.has(key.toLowerCase())) {
+              headers[key] = value;
+            }
+          });
+
+          // Rewrite relative URLs in HTML to absolute
+          const contentType = upstream.headers.get('content-type') || 'text/html';
+
+          if (contentType.includes('text/html')) {
+            let html = await upstream.text();
+            // Inject a <base> tag so relative URLs resolve against the original domain
+            const origin = new URL(url).origin;
+            const baseTag = `<base href="${origin}/">`;
+            html = html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
+            headers['content-type'] = contentType;
+            delete headers['content-length']; // length changed
+            res.writeHead(upstream.status, headers);
+            res.end(html);
+          } else {
+            // Non-HTML (CSS, JS, images) — pipe through
+            const buffer = Buffer.from(await upstream.arrayBuffer());
+            res.writeHead(upstream.status, headers);
+            res.end(buffer);
+          }
+        } catch (err) {
+          res.writeHead(502, { 'Content-Type': 'text/plain' });
+          res.end(`Proxy error: ${err instanceof Error ? err.message : 'unknown'}`);
+        }
+      });
+
       server.middlewares.use(async (req, res, next) => {
         if (req.method !== 'POST') return next();
 
