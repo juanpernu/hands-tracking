@@ -15,6 +15,7 @@ import GripIndicator from './components/telemetry/GripIndicator';
 import { SpatialHighlight } from './components/SpatialHighlight';
 import { SpatialProximityFeedback } from './components/SpatialProximityFeedback';
 import { SpatialHUD } from './components/telemetry/SpatialHUD';
+import { FeatureHUD } from './components/telemetry/FeatureHUD';
 import { useHandTracking } from './hooks/useHandTracking';
 import { useGestureDetection } from './hooks/useGestureDetection';
 import { useMouseFallback } from './hooks/useMouseFallback';
@@ -34,6 +35,8 @@ import { useActionDispatcher } from './plugins/hooks/useActionDispatcher';
 import { useAgentBridge } from './agent/hooks/useAgentBridge';
 import { useContextBuffer } from './agent/hooks/useContextBuffer';
 import { useGestureInterpreter } from './agent/hooks/useGestureInterpreter';
+import { useTemporalFeatures } from './hooks/useTemporalFeatures';
+import { useTemporalGestureDetector } from './agent/hooks/useTemporalGestureDetector';
 import { useActionToast, ActionToastDisplay } from './components/ActionToast';
 import {
   fullscreenPlugin,
@@ -103,6 +106,9 @@ const defaultMappings: GestureMapping[] = [
   { gesture: 'clap', action: 'browser.fullscreen:toggle' },
   { gesture: 'both-spread', action: 'dom.tabs:close-tab' },
   { gesture: 'both-pinch', action: 'dom.tabs:open-tab' },
+  { gesture: 'grip-thumbs-up', action: 'browser.notifications:show-notification', params: { title: 'Thumbs Up! 👍' } },
+  { gesture: 'grip-peace', action: 'browser.notifications:show-notification', params: { title: 'Peace! ✌️' } },
+  { gesture: 'wave', action: 'browser.notifications:show-notification', params: { title: 'Wave! 👋' } },
 ];
 
 // ---- App ---------------------------------------------------------------------
@@ -119,7 +125,7 @@ export default function App() {
   const { objects, addObject, removeObject, moveObject, releaseObject, toggleSize, hitTest } = useObjectManagement(0);
 
   // --- Analysis hooks ---
-  const { physicsData, gripData, motionData, gripRef, computeFrame } = useHandAnalysis();
+  const { physicsData, gripData, motionData, featuresData, gripRef, computeFrame } = useHandAnalysis();
 
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
@@ -186,11 +192,17 @@ export default function App() {
     onAction: handleAction,
   });
 
+  // --- Temporal features + gesture detection ---
+  const temporalFeatures = useTemporalFeatures();
+  const temporalDetector = useTemporalGestureDetector({
+    temporalFeatures,
+    onGestureEvent: interpreter.handle,
+  });
+
   const originalHandleRef = useRef(interpreter.handle);
   originalHandleRef.current = interpreter.handle;
 
   const handleWithFeedback = useCallback((event: import('./agent/types').AgentGestureEvent) => {
-    // Log the gesture for feedback UI
     const spatial = handOverDOM.handSpatialRef.current;
     const hand = spatial?.right ?? spatial?.left;
     const selector = hand?.hoverTarget?.selector;
@@ -204,7 +216,6 @@ export default function App() {
       const next = [...prev, entry];
       return next.length > 15 ? next.slice(-15) : next;
     });
-    // Persist to telemetry (in-memory log + batch file)
     const eventData = {
       type: 'gesture-detected',
       timestamp: performance.now(),
@@ -220,7 +231,6 @@ export default function App() {
       data: eventData,
     });
     recordBatchEvent(eventData);
-    // Still call the original handler
     originalHandleRef.current(event);
   }, [handOverDOM, addEntry, recordBatchEvent]);
 
@@ -298,10 +308,15 @@ export default function App() {
     const useHands = isReadyRef.current && currentHands.length > 0;
 
     // 1. Compute analysis (physics, grip, motion) — writes to refs + throttled setState
-    const { physicsData: physics, gripData: grips, motionData: motions } = computeFrame(
+    const { physicsData: physics, gripData: grips, motionData: motions, featuresData: features } = computeFrame(
       currentHands,
       now,
     );
+
+    // 1b. Push features into temporal buffer and run temporal gesture detection
+    temporalFeatures.push(features);
+    temporalDetector.updateMotion(motions);
+    temporalDetector.detect(currentHands);
 
     // 2. Build spatial telemetry data from hand-over-DOM state
     const spatialMap = new Map<string, SpatialTelemetryData>();
@@ -323,12 +338,12 @@ export default function App() {
     }
 
     // Record telemetry
-    record(currentHands, physics, grips, motions, now, spatialMap);
-    recordBatch(currentHands, physics, grips, motions, now, spatialMap);
-    processFrame(currentHands, physics, grips, motions, now);
+    record(currentHands, physics, grips, motions, now, spatialMap, features);
+    recordBatch(currentHands, physics, grips, motions, now, spatialMap, features);
+    processFrame(currentHands, physics, grips, motions, now, features);
 
     // 3. Shake-to-clear + swipe detection
-    updateShake(currentHands, physics, currentObjects, removeObject, now);
+    updateShake(currentHands, physics, motions, currentObjects, removeObject, now);
     updateMotion(motions, currentHands);
 
     // 3.5 Detect taps early (before gesture detection, to suppress pinch during tap)
@@ -570,6 +585,8 @@ export default function App() {
     }
   }, [
     computeFrame,
+    temporalFeatures,
+    temporalDetector,
     record,
     recordBatch,
     processFrame,
@@ -841,6 +858,12 @@ export default function App() {
               motionData={motionData}
               fps={fps}
             />
+          </DraggablePanel>
+
+          <DraggablePanel initialX={20} initialY={Math.min(H - 340, 400)} handCursors={panelHandCursors}>
+            <ErrorBoundary inline fallbackLabel="Feature HUD error">
+              <FeatureHUD featuresData={featuresData} />
+            </ErrorBoundary>
           </DraggablePanel>
 
           <DraggablePanel initialX={20} initialY={H - 280} handCursors={panelHandCursors}>

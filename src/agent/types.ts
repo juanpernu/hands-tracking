@@ -14,7 +14,14 @@ export type AgentGestureType =
   | 'swipe-up'
   | 'swipe-down'
   | 'circular'
-  | 'grip-change';
+  | 'grip-change'
+  | 'grip-ok'
+  | 'grip-thumbs-up'
+  | 'grip-thumbs-down'
+  | 'grip-peace'
+  | 'grip-call-me'
+  | 'pinch-hold'
+  | 'wave';
 
 export interface AgentGestureEvent {
   type: AgentGestureType;

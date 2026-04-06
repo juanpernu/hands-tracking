@@ -5,6 +5,7 @@
 
 import type { GripType } from '../types/telemetry';
 import type { Landmark } from '../types/index';
+import type { JointAngles, PalmOrientation } from '../types/features';
 import { clamp, distance3d, dot3, normalize3, sub3 } from './geometry';
 import { GRIP, LANDMARK } from '../config';
 
@@ -90,4 +91,63 @@ export function classifyGrip(
   }
 
   return 'partial';
+}
+
+/**
+ * Advanced grip classification using full hand feature vector.
+ * Falls back to basic classifyGrip when advanced features are unavailable.
+ */
+export function classifyGripAdvanced(
+  fingerCurl: readonly [number, number, number, number, number],
+  landmarks: Landmark[],
+  jointAngles?: JointAngles,
+  thumbOpposition?: [number, number, number, number],
+  palmOrientation?: PalmOrientation,
+): GripType {
+  // If advanced features not available, fall back to basic classification
+  if (!jointAngles || !thumbOpposition || !palmOrientation) {
+    return classifyGrip(fingerCurl, landmarks);
+  }
+
+  const [thumbCurl, indexCurl, middleCurl, ringCurl, pinkyCurl] = fingerCurl;
+
+  // --- New types (checked first for specificity) ---
+
+  // OK sign: thumb bent toward index (forming O), index extended, other 3 extended
+  if (
+    thumbOpposition[0] < 0.3 &&
+    thumbCurl > 0.2 &&        // thumb must be bent, not fully extended
+    indexCurl < 0.35 &&        // index extended (forms the O ring)
+    middleCurl < 0.3 &&
+    ringCurl < 0.3 &&
+    pinkyCurl < 0.3
+  ) {
+    return 'ok';
+  }
+
+  // Peace: index + middle extended, ring + pinky curled, thumb NOT fully extended
+  if (
+    thumbCurl > 0.25 &&
+    indexCurl < 0.3 &&
+    middleCurl < 0.3 &&
+    ringCurl > 0.6 &&
+    pinkyCurl > 0.6
+  ) {
+    return 'peace';
+  }
+
+  // Call me: thumb + pinky extended, index + middle + ring curled
+  if (thumbCurl < 0.3 && pinkyCurl < 0.3 && indexCurl > 0.6 && middleCurl > 0.6 && ringCurl > 0.6) {
+    return 'call-me';
+  }
+
+  // Thumbs up/down: thumb extended, all others curled, palm pitch determines direction
+  if (thumbCurl < 0.3 && indexCurl > 0.6 && middleCurl > 0.6 && ringCurl > 0.6 && pinkyCurl > 0.6) {
+    if (palmOrientation.pitch > 0.3) return 'thumbs-up';
+    if (palmOrientation.pitch < -0.3) return 'thumbs-down';
+    return 'partial';  // dead zone — don't commit
+  }
+
+  // --- Fall through to existing classification ---
+  return classifyGrip(fingerCurl, landmarks);
 }

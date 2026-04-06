@@ -1,5 +1,6 @@
-import { computeFingerCurl, classifyGrip } from '../grip';
+import { computeFingerCurl, classifyGrip, classifyGripAdvanced } from '../grip';
 import type { Landmark } from '../../types/index';
+import type { JointAngles, PalmOrientation } from '../../types/features';
 
 /**
  * Helper: build a minimal 21-landmark array with zeros, then override specific ones.
@@ -154,5 +155,76 @@ describe('classifyGrip', () => {
     // Thumb 0.7 is not > 0.7, so fist fails. Not open (all > 0.3). Not pinch (curls too high).
     // Not point (index 0.8 is not < 0.3). Falls through to partial.
     expect(classifyGrip(curls, landmarks)).toBe('partial');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyGripAdvanced
+// ---------------------------------------------------------------------------
+describe('classifyGripAdvanced', () => {
+  /** Stub joint angles — values don't affect classification directly in current impl */
+  function makeJointAngles(): JointAngles {
+    const joint = { mcp: 0, pip: 0, dip: 0 };
+    return { thumb: { ...joint }, index: { ...joint }, middle: { ...joint }, ring: { ...joint }, pinky: { ...joint } };
+  }
+
+  function makePalmOrientation(pitch = 0): PalmOrientation {
+    return { pitch, yaw: 0, roll: 0, normal: { x: 0, y: 0, z: 0 } };
+  }
+
+  it('falls back to classifyGrip when advanced features are undefined', () => {
+    const curls: [number, number, number, number, number] = [0.8, 0.9, 0.85, 0.75, 0.8];
+    const landmarks = makeLandmarks();
+    expect(classifyGripAdvanced(curls, landmarks)).toBe('fist');
+  });
+
+  it('returns "ok" when thumb-index opposition is close and other fingers extended', () => {
+    const curls: [number, number, number, number, number] = [0.5, 0.3, 0.2, 0.2, 0.2];
+    const thumbOpp: [number, number, number, number] = [0.2, 0.8, 0.8, 0.8];
+    const landmarks = makeLandmarks();
+    expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation())).toBe('ok');
+  });
+
+  it('returns "peace" when index + middle extended, ring + pinky curled', () => {
+    const curls: [number, number, number, number, number] = [0.5, 0.2, 0.2, 0.8, 0.8];
+    const thumbOpp: [number, number, number, number] = [0.8, 0.8, 0.8, 0.8];
+    const landmarks = makeLandmarks();
+    expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation())).toBe('peace');
+  });
+
+  it('returns "call-me" when thumb + pinky extended, others curled', () => {
+    const curls: [number, number, number, number, number] = [0.2, 0.8, 0.8, 0.8, 0.2];
+    const thumbOpp: [number, number, number, number] = [0.8, 0.8, 0.8, 0.8];
+    const landmarks = makeLandmarks();
+    expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation())).toBe('call-me');
+  });
+
+  it('returns "thumbs-up" when thumb extended, others curled, pitch > 0.3', () => {
+    const curls: [number, number, number, number, number] = [0.2, 0.8, 0.8, 0.8, 0.8];
+    const thumbOpp: [number, number, number, number] = [0.8, 0.8, 0.8, 0.8];
+    const landmarks = makeLandmarks();
+    expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation(0.5))).toBe('thumbs-up');
+  });
+
+  it('returns "thumbs-down" when thumb extended, others curled, pitch < -0.3', () => {
+    const curls: [number, number, number, number, number] = [0.2, 0.8, 0.8, 0.8, 0.8];
+    const thumbOpp: [number, number, number, number] = [0.8, 0.8, 0.8, 0.8];
+    const landmarks = makeLandmarks();
+    expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation(-0.5))).toBe('thumbs-down');
+  });
+
+  it('returns "partial" when pitch is ambiguous (in dead zone)', () => {
+    const curls: [number, number, number, number, number] = [0.2, 0.8, 0.8, 0.8, 0.8];
+    const thumbOpp: [number, number, number, number] = [0.8, 0.8, 0.8, 0.8];
+    const landmarks = makeLandmarks();
+    expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation(0.1))).toBe('partial');
+  });
+
+  it('falls through to basic classifyGrip for non-advanced poses', () => {
+    // All fingers extended → should fall through to 'open'
+    const curls: [number, number, number, number, number] = [0.1, 0.2, 0.15, 0.1, 0.25];
+    const thumbOpp: [number, number, number, number] = [0.8, 0.8, 0.8, 0.8];
+    const landmarks = makeLandmarks();
+    expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation())).toBe('open');
   });
 });

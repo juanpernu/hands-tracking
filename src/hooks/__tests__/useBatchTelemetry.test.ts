@@ -148,7 +148,7 @@ describe('useBatchTelemetry', () => {
       useBatchTelemetry({ maxFrames: 1000, maxIntervalMs: 60_000, enabled: true }),
     );
 
-    // Record 20 frames (more than BEACON_CHUNK_SIZE of 15)
+    // Record 20 frames (more than BEACON_CHUNK_SIZE of 8)
     for (let i = 0; i < 20; i++) {
       act(() => result.current.record([makeHand()], [makePhysics()], [makeGrip()], [makeMotion()], i));
     }
@@ -157,11 +157,12 @@ describe('useBatchTelemetry', () => {
       window.dispatchEvent(new Event('beforeunload'));
     });
 
-    // 2 batch chunks (15 + 5) + 1 summary = 3 calls
-    expect(sendBeaconMock).toHaveBeenCalledTimes(3);
+    // 3 batch chunks (8 + 8 + 4) + 1 summary = 4 calls
+    expect(sendBeaconMock).toHaveBeenCalledTimes(4);
     expect(sendBeaconMock.mock.calls[0][0]).toBe('/api/telemetry/batch');
     expect(sendBeaconMock.mock.calls[1][0]).toBe('/api/telemetry/batch');
-    expect(sendBeaconMock.mock.calls[2][0]).toBe('/api/telemetry/session-end');
+    expect(sendBeaconMock.mock.calls[2][0]).toBe('/api/telemetry/batch');
+    expect(sendBeaconMock.mock.calls[3][0]).toBe('/api/telemetry/session-end');
   });
 
   it('retries failed batches on next flush with the same payload', async () => {

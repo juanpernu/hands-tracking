@@ -1,5 +1,6 @@
 import type { Landmark } from './index';
 import type { SpatialTelemetryData } from './spatial';
+import type { GesturePhase, HandFeatureVector } from './features';
 
 // Primitives
 export interface Vec3 {
@@ -23,13 +24,14 @@ export interface HandPhysics {
   wristVelocity: Vec3;
   palmVelocity: Vec3;
   angularVelocity: number;
+  wristJerk: Vec3;
   dominantAxis: 'horizontal' | 'vertical' | 'depth' | 'none';
   timestamp: number;
   deltaMs: number;
 }
 
 // Grip detection
-export type GripType = 'open' | 'fist' | 'pinch' | 'point' | 'partial';
+export type GripType = 'open' | 'fist' | 'pinch' | 'point' | 'partial' | 'ok' | 'thumbs-up' | 'thumbs-down' | 'peace' | 'call-me';
 
 export interface GripState {
   handedness: 'Left' | 'Right';
@@ -56,6 +58,7 @@ export interface MotionPattern {
   circularDirection?: 1 | -1;
   durationMs: number;
   timestamp: number;
+  gesturePhase: GesturePhase;
 }
 
 // Gesture events (discrete)
@@ -92,6 +95,7 @@ export interface HandTelemetry {
   grip: GripState;
   motion: MotionPattern;
   spatial?: SpatialTelemetryData;
+  features?: HandFeatureVector;
 }
 
 // Ring buffer

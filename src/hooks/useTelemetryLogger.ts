@@ -1,7 +1,8 @@
 import { useRef, useState, useCallback } from 'react';
 import type { HandData } from '../types';
 import type { HandPhysics, GripState, MotionPattern } from '../types/telemetry';
-import { magnitude3 } from '../utils/geometry';
+import type { HandFeatureVector } from '../types/features';
+import { magnitude3, dot3 } from '../utils/geometry';
 import { TELEMETRY_LOGGER } from '../config';
 
 // --- Event types that we can detect and log ---
@@ -66,6 +67,7 @@ export interface TelemetryLoggerResult {
     grips: GripState[],
     motions: MotionPattern[],
     timestamp: number,
+    features?: HandFeatureVector[],
   ) => void;
   addEntry: (entry: Omit<TelemetryLogEntry, 'id'>) => void;
   clearLog: () => void;
@@ -106,6 +108,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
     grips: GripState[],
     motions: MotionPattern[],
     timestamp: number,
+    features?: HandFeatureVector[],
   ) => {
     // --- Clap detection: two-phase ---
     // Phase 1: both hands fast + converging in X
@@ -120,13 +123,24 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
         if (leftP && rightP) {
           const leftSpeed = magnitude3(leftP.palmVelocity);
           const rightSpeed = magnitude3(rightP.palmVelocity);
-          const converging =
-            (leftP.palmVelocity.x > 0 && rightP.palmVelocity.x < 0) ||
-            (leftP.palmVelocity.x < 0 && rightP.palmVelocity.x > 0);
+          const converging = leftP.palmVelocity.x > 0 && rightP.palmVelocity.x < 0;
           const bothFast = leftSpeed > TELEMETRY_LOGGER.CLAP_MIN_VELOCITY && rightSpeed > TELEMETRY_LOGGER.CLAP_MIN_VELOCITY;
 
+          // Check palm orientation — palms should be roughly facing each other for a clap
+          let palmsOpposed = false;
+          if (features && features.length >= 2) {
+            const leftFeatures = features.find(f => f.handedness === 'Left');
+            const rightFeatures = features.find(f => f.handedness === 'Right');
+            if (leftFeatures && rightFeatures) {
+              // Dot product of palm normals: -1 = facing each other (ideal for clap)
+              const normalDot = dot3(leftFeatures.palmOrientation.normal, rightFeatures.palmOrientation.normal);
+              palmsOpposed = normalDot < -0.3; // normals roughly opposing
+            }
+          }
+
           if (!phase.converging) {
-            if (bothFast && converging) {
+            // palmsOpposed required when features available, skip check when features not available (backwards compat)
+            if (bothFast && converging && (palmsOpposed || !features)) {
               phase.converging = true;
               phase.convergeTime = timestamp;
               phase.peakSpeed = Math.max(leftSpeed, rightSpeed);

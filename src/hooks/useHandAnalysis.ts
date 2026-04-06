@@ -14,14 +14,17 @@ import { useRef, useState, useCallback } from 'react';
 import { useHandPhysics } from './useHandPhysics';
 import { useGripDetection } from './useGripDetection';
 import { useMotionRecognition } from './useMotionRecognition';
+import { useHandFeatures } from './useHandFeatures';
 import type { HandData } from '../types';
 import type { HandPhysics, GripState, MotionPattern } from '../types/telemetry';
+import type { HandFeatureVector } from '../types/features';
 import { UI } from '../config';
 
 export interface HandAnalysisData {
   physicsData: HandPhysics[];
   gripData: GripState[];
   motionData: MotionPattern[];
+  featuresData: HandFeatureVector[];
 }
 
 export interface UseHandAnalysisReturn {
@@ -29,6 +32,7 @@ export interface UseHandAnalysisReturn {
   physicsData: HandPhysics[];
   gripData: GripState[];
   motionData: MotionPattern[];
+  featuresData: HandFeatureVector[];
   /** Live grip ref — updated every frame, for latency-sensitive consumers like panel drag */
   gripRef: React.RefObject<GripState[]>;
   /** Call this every frame from the RAF loop */
@@ -40,11 +44,13 @@ export function useHandAnalysis(): UseHandAnalysisReturn {
   const detectGrip = useGripDetection();
   const classifyMotionLeft = useMotionRecognition();
   const classifyMotionRight = useMotionRecognition();
+  const computeFeatures = useHandFeatures();
 
   // Refs hold the latest raw data — updated every frame, never cause re-renders
   const physicsRef = useRef<HandPhysics[]>([]);
   const gripRef = useRef<GripState[]>([]);
   const motionRef = useRef<MotionPattern[]>([]);
+  const featuresRef = useRef<HandFeatureVector[]>([]);
 
   // Throttle tracking
   const lastUiUpdateRef = useRef<number>(0);
@@ -53,19 +59,38 @@ export function useHandAnalysis(): UseHandAnalysisReturn {
   const [uiPhysics, setUiPhysics] = useState<HandPhysics[]>([]);
   const [uiGrip, setUiGrip] = useState<GripState[]>([]);
   const [uiMotion, setUiMotion] = useState<MotionPattern[]>([]);
+  const [uiFeatures, setUiFeatures] = useState<HandFeatureVector[]>([]);
 
   const computeFrame = useCallback(
     (hands: HandData[], timestamp: number): HandAnalysisData => {
+      // 1. Features first (no dependencies)
+      const rawFeatures = computeFeatures(hands, timestamp);
+
+      // 2. Grips depend on features (pass pre-computed to avoid duplicate extraction)
+      const grips = detectGrip(hands, timestamp, rawFeatures);
+
+      // 3. Motions depend on physics; use per-hand recognizers to avoid cross-contamination
       const physics = computePhysics(hands, timestamp);
-      const grips = detectGrip(hands, timestamp);
       const motions = physics.map((p) =>
-        p.handedness === 'Left' ? classifyMotionLeft(p, timestamp) : classifyMotionRight(p, timestamp),
+        p.handedness === 'Left'
+          ? classifyMotionLeft(p, timestamp)
+          : classifyMotionRight(p, timestamp),
       );
+
+      // 4. Enrich features with gesture phase, aligned by handedness (not index)
+      const motionByHand = new Map(
+        motions.map((m, i) => [physics[i].handedness, m]),
+      );
+      const features = rawFeatures.map((f) => ({
+        ...f,
+        gesturePhase: motionByHand.get(f.handedness)?.gesturePhase ?? f.gesturePhase,
+      }));
 
       // Always write to refs (every frame, no re-render)
       physicsRef.current = physics;
       gripRef.current = grips;
       motionRef.current = motions;
+      featuresRef.current = features;
 
       // Throttled UI state update (~10fps)
       if (timestamp - lastUiUpdateRef.current >= UI.THROTTLE_MS) {
@@ -73,17 +98,19 @@ export function useHandAnalysis(): UseHandAnalysisReturn {
         setUiPhysics(physics);
         setUiGrip(grips);
         setUiMotion(motions);
+        setUiFeatures(features);
       }
 
-      return { physicsData: physics, gripData: grips, motionData: motions };
+      return { physicsData: physics, gripData: grips, motionData: motions, featuresData: features };
     },
-    [computePhysics, detectGrip, classifyMotionLeft, classifyMotionRight],
+    [computePhysics, detectGrip, classifyMotionLeft, classifyMotionRight, computeFeatures],
   );
 
   return {
     physicsData: uiPhysics,
     gripData: uiGrip,
     motionData: uiMotion,
+    featuresData: uiFeatures,
     gripRef,
     computeFrame,
   };

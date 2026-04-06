@@ -1,8 +1,9 @@
 import { useRef, useCallback } from 'react';
 import type { HandPhysics, MotionPattern, SwipeDirection } from '../types/telemetry';
+import type { GesturePhase } from '../types/features';
 import { magnitude3, clamp } from '../utils/geometry';
 import { wrapAngleDelta } from '../utils/motion';
-import { MOTION } from '../config';
+import { MOTION, FEATURES } from '../config';
 
 // ─── Ring buffer frame type ───────────────────────────────────────────────────
 
@@ -33,6 +34,11 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
   const bufferRef = useRef<FrameSnapshot[]>([]);
   const headRef = useRef<number>(0);
   const sizeRef = useRef<number>(0);
+
+  // Gesture phase detection refs
+  const prevPhaseRef = useRef<GesturePhase>('idle');
+  const phaseCountRef = useRef(0);
+  const prevSpeedRef = useRef(0);
 
   // ─── Buffer helpers (captured once via closure, not recreated) ─────────────
 
@@ -72,7 +78,10 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
 
   // ─── Pattern detectors ─────────────────────────────────────────────────────
 
-  function detectSwipe(timestamp: number): MotionPattern | null {
+  function detectSwipe(timestamp: number, currentPhase: GesturePhase): MotionPattern | null {
+    // Only block swipe during retraction — allow idle so fast flicks aren't missed
+    if (currentPhase === 'retraction') return null;
+
     const SPEED_THRESHOLD = MOTION.SWIPE_SPEED_THRESHOLD;
     const MIN_FRAMES = MOTION.SWIPE_MIN_FRAMES;
 
@@ -122,6 +131,9 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
     const absX = Math.abs(dominantVx);
     const absY = Math.abs(dominantVy);
 
+    // Boost confidence when phase is 'stroke' (user was "winding up" through preparation)
+    const phaseBoost = currentPhase === 'stroke' ? 0.1 : 0;
+
     if (consecutiveX >= MIN_FRAMES && absX >= absY) {
       const direction: SwipeDirection = dominantVx > 0 ? 'right' : 'left';
       const newest = fromNewest(0);
@@ -129,7 +141,7 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
       const durationMs = newest && oldest ? newest.timestamp - oldest.timestamp : 0;
       return {
         type: 'swipe',
-        confidence: clamp(latestSpeed / 1.5, 0, 1),
+        confidence: clamp((latestSpeed / 1.5) + phaseBoost, 0, 1),
         swipeDirection: direction,
         durationMs,
         timestamp,
@@ -144,7 +156,7 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
       const durationMs = newest && oldest ? newest.timestamp - oldest.timestamp : 0;
       return {
         type: 'swipe',
-        confidence: clamp(latestSpeed / 1.5, 0, 1),
+        confidence: clamp((latestSpeed / 1.5) + phaseBoost, 0, 1),
         swipeDirection: direction,
         durationMs,
         timestamp,
@@ -267,6 +279,18 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
     return null;
   }
 
+  // ─── Gesture phase detection ────────────────────────────────────────────────
+
+  function detectGesturePhase(speed: number, prevSpeed: number): GesturePhase {
+    const acceleration = speed - prevSpeed;
+
+    if (speed < FEATURES.PHASE_IDLE_THRESHOLD) return 'idle';
+    if (acceleration > FEATURES.PHASE_PREPARATION_ACCEL_THRESHOLD) return 'preparation';
+    if (speed > FEATURES.PHASE_RETRACTION_SPEED_THRESHOLD && acceleration >= FEATURES.PHASE_STROKE_DECEL_THRESHOLD) return 'stroke';
+    if (acceleration < FEATURES.PHASE_STROKE_DECEL_THRESHOLD) return 'retraction';
+    return 'idle';
+  }
+
   // ─── Main callback ─────────────────────────────────────────────────────────
 
   const classify = useCallback(
@@ -277,16 +301,32 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
 
       push({ palmVelocity: { x: vel.x, y: vel.y, z: vel.z }, speed, timestamp, angle });
 
-      const none: MotionPattern = { type: 'none', confidence: 0, durationMs: 0, timestamp };
+      // Gesture phase detection with hysteresis
+      const rawPhase = detectGesturePhase(speed, prevSpeedRef.current);
+      prevSpeedRef.current = speed;
+
+      if (rawPhase === prevPhaseRef.current) {
+        phaseCountRef.current++;
+      } else {
+        phaseCountRef.current = 1;
+        prevPhaseRef.current = rawPhase;
+      }
+
+      const confirmedPhase = phaseCountRef.current >= FEATURES.PHASE_HYSTERESIS_FRAMES
+        ? prevPhaseRef.current
+        : (prevPhaseRef.current === rawPhase ? rawPhase : 'idle');
+
+      const none: MotionPattern = { type: 'none', confidence: 0, durationMs: 0, timestamp, gesturePhase: confirmedPhase };
 
       // Priority: swipe > circular > acceleration-burst > static-hold > none
-      return (
-        detectSwipe(timestamp) ??
+      const pattern =
+        detectSwipe(timestamp, confirmedPhase) ??
         detectCircular(timestamp) ??
         detectAccelerationBurst(timestamp) ??
         detectStaticHold(timestamp) ??
-        none
-      );
+        none;
+
+      return { ...pattern, gesturePhase: confirmedPhase };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
