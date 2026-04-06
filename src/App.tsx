@@ -44,7 +44,7 @@ import {
   notificationsPlugin,
 } from './plugins/built-in';
 import type { GestureMapping } from './agent/types';
-import type { ActionIntent } from './plugins/types';
+import type { ActionIntent, ActionResult } from './plugins/types';
 import type { SpatialEvent, SpatialTelemetryData } from './types/spatial';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
@@ -151,7 +151,13 @@ export default function App() {
     clipboardPlugin, speechPlugin, notificationsPlugin,
   ]);
   const dispatcher = useActionDispatcher(registry);
-  const bridge = useAgentBridge({ enabled: false });
+  const onLLMActionRef = useRef<((intent: ActionIntent) => void) | null>(null);
+  const bridge = useAgentBridge({
+    enabled: true,
+    actions: registry.listAll().flatMap(p => p.actions),
+    spatialRef: handOverDOM.handSpatialRef,
+    onAction: onLLMActionRef,
+  });
   const contextBuffer = useContextBuffer({ maxEvents: 50, maxMs: 10000 });
   const { toasts, addToast } = useActionToast();
 
@@ -160,6 +166,9 @@ export default function App() {
     addToast(intent.action, `${intent.plugin}:${intent.action}`, result);
     return result;
   }, [dispatcher, addToast]);
+
+  // Wire LLM async responses to the same action handler
+  onLLMActionRef.current = handleAction;
 
   const interpreter = useGestureInterpreter({
     mappings: defaultMappings,
