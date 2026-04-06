@@ -51,7 +51,7 @@ import type { GestureFeedbackEntry } from './components/telemetry/GestureFeedbac
 import { useTapDetection } from './hooks/useTapDetection';
 import TapRipple from './components/TapRipple';
 import type { TapRippleHandle } from './components/TapRipple';
-import NavigationBar from './components/NavigationBar';
+import { NavigationBar } from './components/NavigationBar';
 import type { NavigationBarHandle } from './components/NavigationBar';
 import { NAV_BAR } from './config';
 
