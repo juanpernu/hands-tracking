@@ -96,8 +96,6 @@ const MemoDualHandHUD = memo(DualHandHUD);
 
 const defaultMappings: GestureMapping[] = [
   { gesture: 'clap', action: 'browser.fullscreen:toggle' },
-  { gesture: 'shake', action: 'dom.navigation:go-back' },
-  { gesture: 'swipe-left', action: 'dom.navigation:go-back' },
   { gesture: 'swipe-right', action: 'dom.navigation:go-forward' },
   { gesture: 'both-spread', action: 'dom.tabs:close-tab' },
   { gesture: 'both-pinch', action: 'dom.tabs:open-tab' },
