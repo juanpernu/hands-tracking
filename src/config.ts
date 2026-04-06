@@ -243,3 +243,11 @@ export const TAP = {
   RIPPLE_DURATION_MS: 300,
   RIPPLE_SIZE: 40,
 } as const;
+
+// --- Navigation Bar ---
+export const NAV_BAR = {
+  TRIGGER_ZONE_TOP: 0.05,      // top 5% of screen height (normalized)
+  TRIGGER_ZONE_LEFT: 0.25,     // center 50% of screen width (25% to 75%)
+  TRIGGER_ZONE_RIGHT: 0.75,
+  HOVER_TRIGGER_MS: 1500,      // hold hand in zone for 1.5s to trigger
+} as const;
