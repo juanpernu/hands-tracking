@@ -96,6 +96,8 @@ const defaultMappings: GestureMapping[] = [
   { gesture: 'swipe-right', action: 'dom.navigation:go-forward' },
   { gesture: 'both-spread', action: 'dom.tabs:close-tab' },
   { gesture: 'both-pinch', action: 'dom.tabs:open-tab' },
+  { gesture: 'grip-thumbs-up', action: 'browser.notifications:show-notification', params: { title: 'Thumbs Up! 👍' } },
+  { gesture: 'grip-peace', action: 'browser.notifications:show-notification', params: { title: 'Peace! ✌️' } },
 ];
 
 // ---- App ---------------------------------------------------------------------
@@ -230,7 +232,7 @@ export default function App() {
     const useHands = isReadyRef.current && currentHands.length > 0;
 
     // 1. Compute analysis (physics, grip, motion) — writes to refs + throttled setState
-    const { physicsData: physics, gripData: grips, motionData: motions } = computeFrame(
+    const { physicsData: physics, gripData: grips, motionData: motions, featuresData: features } = computeFrame(
       currentHands,
       now,
     );
@@ -257,10 +259,10 @@ export default function App() {
     // Record telemetry
     record(currentHands, physics, grips, motions, now, spatialMap);
     recordBatch(currentHands, physics, grips, motions, now, spatialMap);
-    processFrame(currentHands, physics, grips, motions, now);
+    processFrame(currentHands, physics, grips, motions, now, features);
 
     // 3. Shake-to-clear + swipe detection
-    updateShake(currentHands, physics, currentObjects, removeObject, now);
+    updateShake(currentHands, physics, motions, currentObjects, removeObject, now);
     updateMotion(motions, currentHands);
 
     // 4. Detect gesture

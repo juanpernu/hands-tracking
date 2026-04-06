@@ -74,9 +74,32 @@ export const INTERACTION = {
   SHAKE_CLEAR_DEBOUNCE_MS: 2000,
   SHAKE_CLEAR_INTERVAL_MS: 150,
   SHAKE_HISTORY_SIZE: 15,
+  SHAKE_JERK_THRESHOLD: 300,
   PARTIAL_GRAB_ENTER: 0.65,
   PARTIAL_GRAB_EXIT: 0.8,
   SWIPE_DEBOUNCE_MS: 1000,
+} as const;
+
+// --- Hand Features ---
+export const FEATURES = {
+  // Joint constraint limits (radians) — from D-H kinematic model
+  MCP_FLEXION_MIN: 0,
+  MCP_FLEXION_MAX: Math.PI / 2,          // 90°
+  MCP_ABDUCTION_MIN: -Math.PI / 12,      // -15°
+  MCP_ABDUCTION_MAX: Math.PI / 12,       // 15°
+  PIP_FLEXION_MIN: 0,
+  PIP_FLEXION_MAX: (110 / 180) * Math.PI, // 110°
+  DIP_FLEXION_MIN: 0,
+  DIP_FLEXION_MAX: Math.PI / 2,           // 90°
+  // Thumb-specific limits
+  THUMB_MCP_FLEXION_MAX: (60 / 180) * Math.PI,   // ~60° CMC abduction
+  THUMB_IP_FLEXION_MAX: (80 / 180) * Math.PI,    // ~80° IP flexion
+  // Gesture phase velocity thresholds (normalized units/sec)
+  PHASE_IDLE_THRESHOLD: 0.02,
+  PHASE_PREPARATION_ACCEL_THRESHOLD: 0.1,
+  PHASE_STROKE_DECEL_THRESHOLD: -0.05,
+  PHASE_RETRACTION_SPEED_THRESHOLD: 0.05,
+  PHASE_HYSTERESIS_FRAMES: 3,
 } as const;
 
 // --- Object Management ---
