@@ -51,6 +51,9 @@ import type { GestureFeedbackEntry } from './components/telemetry/GestureFeedbac
 import { useTapDetection } from './hooks/useTapDetection';
 import TapRipple from './components/TapRipple';
 import type { TapRippleHandle } from './components/TapRipple';
+import NavigationBar from './components/NavigationBar';
+import type { NavigationBarHandle } from './components/NavigationBar';
+import { NAV_BAR } from './config';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
 
@@ -231,6 +234,8 @@ export default function App() {
   const leftCursorSmoothed = useRef({ x: 0, y: 0, initialized: false });
   const gripIndicatorRef = useRef<HTMLDivElement>(null);
   const tapRippleRef = useRef<TapRippleHandle>(null);
+  const navBarRef = useRef<NavigationBarHandle>(null);
+  const navZoneRef = useRef({ enterTime: 0, triggered: false });
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
 
   // --- Tap detection ---
@@ -422,6 +427,30 @@ export default function App() {
       }
     }
 
+    // 6.6 Navigation bar trigger — hand hovering in top-center zone for 1.5s
+    const navState = navZoneRef.current;
+    for (const hand of currentHands) {
+      const lm8 = hand.landmarks[8];
+      if (lm8) {
+        const nx = 1 - lm8.x; // mirrored
+        const ny = lm8.y;
+        const inZone = ny < NAV_BAR.TRIGGER_ZONE_TOP
+          && nx > NAV_BAR.TRIGGER_ZONE_LEFT
+          && nx < NAV_BAR.TRIGGER_ZONE_RIGHT;
+
+        if (inZone) {
+          if (navState.enterTime === 0) navState.enterTime = now;
+          if (now - navState.enterTime >= NAV_BAR.HOVER_TRIGGER_MS && !navState.triggered) {
+            navState.triggered = true;
+            navBarRef.current?.show();
+          }
+        } else {
+          navState.enterTime = 0;
+          navState.triggered = false;
+        }
+      }
+    }
+
     // 7. Update timeline ring buffer
     const primaryPhysics = physics[0];
     const primarySpeed = primaryPhysics ? magnitude3(primaryPhysics.palmVelocity) * currentW : 0;
@@ -580,6 +609,9 @@ export default function App() {
         transition: edgeWarning === 'near' ? 'none' : 'border-color 300ms ease, box-shadow 300ms ease',
       }}
     >
+      {/* Navigation bar */}
+      <NavigationBar ref={navBarRef} />
+
       {/* Tap ripple feedback */}
       <TapRipple ref={tapRippleRef} />
 
