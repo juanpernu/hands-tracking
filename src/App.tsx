@@ -236,6 +236,7 @@ export default function App() {
   const tapRippleRef = useRef<TapRippleHandle>(null);
   const navBarRef = useRef<NavigationBarHandle>(null);
   const navZoneRef = useRef({ enterTime: 0, triggered: false });
+  const scrollDragRef = useRef({ active: false, lastX: 0, lastY: 0 });
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
 
   // --- Tap detection ---
@@ -448,6 +449,31 @@ export default function App() {
           navState.enterTime = 0;
           navState.triggered = false;
         }
+      }
+    }
+
+    // 6.7 Pinch scroll — when pinching with no object grabbed, scroll the iframe
+    if (navBarRef.current?.hasIframe && gesture) {
+      const isPinching = gesture.isPinching;
+      const noObjectGrabbed = !currentGrabbedRight && !currentGrabbedLeft;
+
+      if (isPinching && noObjectGrabbed && result) {
+        const sd = scrollDragRef.current;
+        if (!sd.active) {
+          sd.active = true;
+          sd.lastX = result.cursorPixel.x;
+          sd.lastY = result.cursorPixel.y;
+        } else {
+          const deltaX = sd.lastX - result.cursorPixel.x;
+          const deltaY = sd.lastY - result.cursorPixel.y;
+          if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+            navBarRef.current.scrollBy(deltaX * 2, deltaY * 2);
+            sd.lastX = result.cursorPixel.x;
+            sd.lastY = result.cursorPixel.y;
+          }
+        }
+      } else {
+        scrollDragRef.current.active = false;
       }
     }
 

@@ -8,6 +8,8 @@ export interface NavigationBarHandle {
   show: () => void;
   hide: () => void;
   isVisible: boolean;
+  scrollBy: (deltaX: number, deltaY: number) => void;
+  hasIframe: boolean;
 }
 
 // ============================================================
@@ -51,6 +53,7 @@ const NavigationBar = memo(
     const [recentUrls, setRecentUrls] = useState<string[]>([]);
 
     const inputRef = useRef<HTMLInputElement>(null);
+    const iframeRef = useRef<HTMLIFrameElement>(null);
 
     // Expose handle to parent
     useImperativeHandle(
@@ -65,8 +68,17 @@ const NavigationBar = memo(
         get isVisible() {
           return visible;
         },
+        scrollBy(deltaX: number, deltaY: number) {
+          iframeRef.current?.contentWindow?.postMessage(
+            { type: 'hands-tracker-scroll', deltaX, deltaY },
+            '*',
+          );
+        },
+        get hasIframe() {
+          return iframeUrl !== null;
+        },
       }),
-      [visible],
+      [visible, iframeUrl],
     );
 
     // Reload recents when bar opens
@@ -158,6 +170,7 @@ const NavigationBar = memo(
         {/* Iframe */}
         {iframeUrl !== null && (
           <iframe
+            ref={iframeRef}
             src={iframeUrl}
             style={iframeStyle}
             title="NavigationBar iframe"

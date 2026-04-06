@@ -124,7 +124,9 @@ export default function telemetryPlugin(options: TelemetryPluginOptions = {}): P
             // Inject a <base> tag so relative URLs resolve against the original domain
             const origin = new URL(url).origin;
             const baseTag = `<base href="${origin}/">`;
-            html = html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
+            // Inject scroll listener that responds to postMessage from parent
+            const scrollScript = `<script>window.addEventListener('message',function(e){if(e.data&&e.data.type==='hands-tracker-scroll'){window.scrollBy(e.data.deltaX,e.data.deltaY);}});<\/script>`;
+            html = html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}${scrollScript}`);
             headers['content-type'] = contentType;
             delete headers['content-length']; // length changed
             res.writeHead(upstream.status, headers);
