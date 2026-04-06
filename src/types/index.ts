@@ -10,6 +10,7 @@ export interface DraggableObjectData {
   width: number;
   height: number;
   color: string;
+  enlarged?: boolean;
 }
 
 export type GestureState = 'idle' | 'hovering' | 'grabbing' | 'creating' | 'deleting';

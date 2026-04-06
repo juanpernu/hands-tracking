@@ -73,6 +73,7 @@ export interface ObjectManagementResult {
   removeObject: (id: string) => void;
   moveObject: (id: string, position: Position) => void;
   releaseObject: (id: string) => void;
+  toggleSize: (id: string) => void;
   applyMomentum: () => void;
   hitTest: (cursor: Position) => string | null;
   clearAll: () => void;
@@ -105,6 +106,18 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
 
   const removeObject = useCallback((id: string) => {
     setObjects((prev) => prev.filter((obj) => obj.id !== id));
+  }, []);
+
+  // Toggle object size: normal ↔ enlarged (10% bigger)
+  const toggleSize = useCallback((id: string) => {
+    setObjects((prev) =>
+      prev.map((obj) => {
+        if (obj.id !== id) return obj;
+        const isEnlarged = obj.enlarged ?? false;
+        const newSize = isEnlarged ? OBJECTS.SIZE : Math.round(OBJECTS.SIZE * 1.1);
+        return { ...obj, width: newSize, height: newSize, enlarged: !isEnlarged };
+      }),
+    );
   }, []);
 
   const moveObject = useCallback((id: string, position: Position) => {
@@ -264,5 +277,5 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     setObjects([]);
   }, []);
 
-  return { objects, addObject, removeObject, moveObject, releaseObject, applyMomentum, hitTest, clearAll };
+  return { objects, addObject, removeObject, moveObject, releaseObject, toggleSize, applyMomentum, hitTest, clearAll };
 }

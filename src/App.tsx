@@ -116,7 +116,7 @@ export default function App() {
   const { hands, isReady, error, videoRef } = useHandTracking();
   const detectGesture = useGestureDetection();
   const { positionRef: mousePosRef, isGrabbing: mouseGrabbing, containerRef } = useMouseFallback();
-  const { objects, addObject, removeObject, moveObject, releaseObject, applyMomentum, hitTest } = useObjectManagement(0);
+  const { objects, addObject, removeObject, moveObject, releaseObject, toggleSize, applyMomentum, hitTest } = useObjectManagement(0);
 
   // --- Analysis hooks ---
   const { physicsData, gripData, motionData, gripRef, computeFrame } = useHandAnalysis();
@@ -491,6 +491,12 @@ export default function App() {
         const next = [...prev, entry];
         return next.length > 15 ? next.slice(-15) : next;
       });
+
+      // Check if tap hit a draggable object → toggle size
+      const tappedObjectId = hitTest({ x: px, y: py });
+      if (tappedObjectId) {
+        toggleSize(tappedObjectId);
+      }
 
       if (el && el instanceof HTMLElement) {
         el.click();
