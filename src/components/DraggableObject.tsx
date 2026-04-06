@@ -53,7 +53,7 @@ export const DraggableObject = React.memo(function DraggableObject({
     backgroundColor: color,
     borderRadius: UI.OBJECT_BORDER_RADIUS,
     transition:
-      `transform ${UI.TRANSITION_DURATION_MS}ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow ${UI.TRANSITION_DURATION_MS}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+      `transform ${UI.TRANSITION_DURATION_MS}ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow ${UI.TRANSITION_DURATION_MS}ms cubic-bezier(0.4, 0, 0.2, 1), width ${UI.TRANSITION_DURATION_MS}ms ease-out, height ${UI.TRANSITION_DURATION_MS}ms ease-out`,
     cursor: isGrabbed ? 'grabbing' : 'grab',
     ...stateStyles,
   };

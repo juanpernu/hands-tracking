@@ -173,8 +173,9 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
         }
       } else if (phase.converging && hands.length < 2) {
         // Phase 2b: hand lost after convergence = palms collided and occluded one hand
+        // Require at least 100ms of convergence to avoid false positives from hand-exit
         const timeSinceConverge = timestamp - phase.convergeTime;
-        if (timeSinceConverge < TELEMETRY_LOGGER.CLAP_OCCLUSION_MS) {
+        if (timeSinceConverge >= 100 && timeSinceConverge < TELEMETRY_LOGGER.CLAP_OCCLUSION_MS) {
           lastClapTimeRef.current = timestamp;
           phase.converging = false;
           addEntry({

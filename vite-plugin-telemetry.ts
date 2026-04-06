@@ -75,12 +75,86 @@ function getPathname(url: string | undefined): string {
   }
 }
 
+const BLOCKED_HOSTS = /^(169\.254\.|metadata\.google\.internal)/i;
+
+function isSafeProxyTarget(rawUrl: string): boolean {
+  try {
+    const { hostname, protocol } = new URL(rawUrl);
+    if (!['http:', 'https:'].includes(protocol)) return false;
+    if (BLOCKED_HOSTS.test(hostname)) return false;
+    return true;
+  } catch { return false; }
+}
+
 export default function telemetryPlugin(options: TelemetryPluginOptions = {}): Plugin {
   const config: WriterConfig = { baseDir: options.baseDir ?? './telemetry-data' };
 
   return {
     name: 'vite-plugin-telemetry',
     configureServer(server) {
+      // Proxy for iframe navigation — strips X-Frame-Options and CSP headers
+      server.middlewares.use('/api/proxy', async (req, res) => {
+        const url = new URL(req.url ?? '', 'http://localhost').searchParams.get('url');
+        if (!url || !isSafeProxyTarget(url)) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('Missing or invalid url parameter');
+          return;
+        }
+
+        try {
+          const upstream = await fetch(url, {
+            headers: {
+              'User-Agent': 'hands-tracker-proxy/1.0',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.5',
+            },
+            redirect: 'follow',
+          });
+
+          // Copy headers, stripping iframe-blocking ones
+          const blocked = new Set([
+            'x-frame-options',
+            'content-security-policy',
+            'content-security-policy-report-only',
+            'cross-origin-embedder-policy',
+            'cross-origin-opener-policy',
+            'cross-origin-resource-policy',
+          ]);
+          const headers: Record<string, string> = {};
+          upstream.headers.forEach((value, key) => {
+            if (!blocked.has(key.toLowerCase())) {
+              headers[key] = value;
+            }
+          });
+
+          // Rewrite relative URLs in HTML to absolute
+          const contentType = upstream.headers.get('content-type') || 'text/html';
+
+          if (contentType.includes('text/html')) {
+            let html = await upstream.text();
+            // Inject a <base> tag so relative URLs resolve against the original domain
+            const origin = new URL(url).origin;
+            const baseTag = `<base href="${origin}/">`;
+            // Inject scroll listener that responds to postMessage from parent
+            const appOrigin = `http://localhost:${server.config.server.port || 5173}`;
+            const scrollScript = `<script>window.addEventListener('message',function(e){if(e.origin!=='${appOrigin}')return;if(e.data&&e.data.type==='hands-tracker-scroll'){window.scrollBy(e.data.deltaX,e.data.deltaY);}});<\/script>`;
+            html = html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}${scrollScript}`);
+            headers['content-type'] = contentType;
+            delete headers['content-length']; // length changed
+            res.writeHead(upstream.status, headers);
+            res.end(html);
+          } else {
+            // Non-HTML (CSS, JS, images) — pipe through
+            const buffer = Buffer.from(await upstream.arrayBuffer());
+            res.writeHead(upstream.status, headers);
+            res.end(buffer);
+          }
+        } catch (err) {
+          res.writeHead(502, { 'Content-Type': 'text/plain' });
+          res.end(`Proxy error: ${err instanceof Error ? err.message : 'unknown'}`);
+        }
+      });
+
       server.middlewares.use(async (req, res, next) => {
         if (req.method !== 'POST') return next();
 

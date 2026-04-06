@@ -5,6 +5,19 @@ import { hitTest as aabbHitTest } from '../utils/geometry';
 import { objectsOverlap, resolveCollisions } from '../utils/collision';
 import { OBJECTS, SPATIAL } from '../config';
 
+// --- Momentum / Physics ---
+interface ObjectMomentum {
+  vx: number;
+  vy: number;
+  lastMoveX: number;
+  lastMoveY: number;
+  lastMoveTime: number;
+}
+
+const FRICTION = 0.92;           // velocity multiplier per frame (1 = no friction)
+const MIN_VELOCITY = 0.5;       // px/frame below which momentum stops
+const MOMENTUM_MULTIPLIER = 0.8; // scale release velocity
+
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -59,6 +72,8 @@ export interface ObjectManagementResult {
   addObject: (position: Position) => void;
   removeObject: (id: string) => void;
   moveObject: (id: string, position: Position) => void;
+  releaseObject: (id: string) => void;
+  toggleSize: (id: string) => void;
   hitTest: (cursor: Position) => string | null;
   clearAll: () => void;
 }
@@ -74,6 +89,8 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
   objectsRef.current = objects;
 
   const lastAddTimeRef = useRef<number>(0);
+  const momentumRef = useRef<Map<string, ObjectMomentum>>(new Map());
+  const momentumRafRef = useRef<Map<string, number>>(new Map());
 
   const addObject = useCallback((position: Position) => {
     const now = Date.now();
@@ -88,10 +105,41 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
   }, []);
 
   const removeObject = useCallback((id: string) => {
+    // Cancel any in-flight momentum RAF loop
+    const rafId = momentumRafRef.current.get(id);
+    if (rafId) { cancelAnimationFrame(rafId); momentumRafRef.current.delete(id); }
     setObjects((prev) => prev.filter((obj) => obj.id !== id));
   }, []);
 
+  // Toggle object size: normal ↔ enlarged (10% bigger)
+  const toggleSize = useCallback((id: string) => {
+    setObjects((prev) =>
+      prev.map((obj) => {
+        if (obj.id !== id) return obj;
+        const isEnlarged = obj.enlarged ?? false;
+        const newSize = isEnlarged ? OBJECTS.SIZE : Math.round(OBJECTS.SIZE * 1.1);
+        return { ...obj, width: newSize, height: newSize, enlarged: !isEnlarged };
+      }),
+    );
+  }, []);
+
   const moveObject = useCallback((id: string, position: Position) => {
+    // Track velocity for momentum on release
+    const now = performance.now();
+    const mom = momentumRef.current.get(id);
+    if (mom) {
+      const dt = now - mom.lastMoveTime;
+      if (dt > 0 && dt < 100) { // ignore stale deltas
+        mom.vx = (position.x - mom.lastMoveX) / dt * 16; // normalize to ~60fps frame
+        mom.vy = (position.y - mom.lastMoveY) / dt * 16;
+      }
+      mom.lastMoveX = position.x;
+      mom.lastMoveY = position.y;
+      mom.lastMoveTime = now;
+    } else {
+      momentumRef.current.set(id, { vx: 0, vy: 0, lastMoveX: position.x, lastMoveY: position.y, lastMoveTime: now });
+    }
+
     setObjects((prev) => {
       const updated = prev.map((obj) => {
         if (obj.id !== id) return obj;
@@ -164,6 +212,52 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     });
   }, []);
 
+  // Release an object — start momentum animation
+  const releaseObject = useCallback((id: string) => {
+    const mom = momentumRef.current.get(id);
+    if (!mom) return;
+
+    let vx = mom.vx * MOMENTUM_MULTIPLIER;
+    let vy = mom.vy * MOMENTUM_MULTIPLIER;
+
+    // Clear the tracking entry (prevent re-triggering)
+    momentumRef.current.delete(id);
+
+    // Skip if velocity is too low
+    if (Math.sqrt(vx * vx + vy * vy) < MIN_VELOCITY) return;
+
+    // Self-contained RAF animation loop
+    function animate() {
+      const speed = Math.sqrt(vx * vx + vy * vy);
+      if (speed < MIN_VELOCITY) { momentumRafRef.current.delete(id); return; }
+
+      // Apply friction outside setObjects
+      vx *= FRICTION;
+      vy *= FRICTION;
+
+      const obj = objectsRef.current.find(o => o.id === id);
+      if (!obj) { momentumRafRef.current.delete(id); return; } // object removed
+
+      let newX = obj.x + vx;
+      let newY = obj.y + vy;
+
+      // Bounce off edges (outside setObjects so mutations are idempotent)
+      if (newX <= 0) { newX = 0; vx *= -0.5; }
+      if (newX >= window.innerWidth - obj.width) { newX = window.innerWidth - obj.width; vx *= -0.5; }
+      if (newY <= 0) { newY = 0; vy *= -0.5; }
+      if (newY >= window.innerHeight - obj.height) { newY = window.innerHeight - obj.height; vy *= -0.5; }
+
+      setObjects((prev) => {
+        const updated = prev.map((o) => o.id === id ? { ...o, x: newX, y: newY } : o);
+        return resolveCollisions(updated, id, window.innerWidth, window.innerHeight);
+      });
+
+      momentumRafRef.current.set(id, requestAnimationFrame(animate));
+    }
+
+    momentumRafRef.current.set(id, requestAnimationFrame(animate));
+  }, []);
+
   // Reads from objectsRef so the callback is stable (never needs to be recreated)
   const hitTest = useCallback(
     (cursor: Position): string | null => {
@@ -184,5 +278,5 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     setObjects([]);
   }, []);
 
-  return { objects, addObject, removeObject, moveObject, hitTest, clearAll };
+  return { objects, addObject, removeObject, moveObject, releaseObject, toggleSize, hitTest, clearAll };
 }

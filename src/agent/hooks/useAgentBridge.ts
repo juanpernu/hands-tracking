@@ -1,19 +1,54 @@
-import { useCallback, useMemo } from 'react';
-import type { AgentBridge, InterpretRequest } from '../types';
-import type { ActionIntent } from '../../plugins/types';
+import { useCallback, useEffect, useMemo } from 'react';
+import { useOllamaStream } from './useOllamaStream';
+import type { OllamaDebugInfo } from './useOllamaStream';
+import { buildSystemPrompt, formatGestureMessage } from '../ollama-config';
+import type { AgentBridge, InterpretRequest, OllamaResponse } from '../types';
+import type { ActionDefinition, ActionIntent } from '../../plugins/types';
+import type { HandSpatialState } from '../../types/spatial';
 
-interface AgentBridgeConfig {
+export type { OllamaDebugInfo };
+
+export interface AgentBridgeConfig {
   enabled: boolean;
+  actions?: ActionDefinition[];
+  spatialRef?: React.MutableRefObject<{ left: HandSpatialState | null; right: HandSpatialState | null }>;
+  onAction?: React.MutableRefObject<((intent: ActionIntent) => void) | null>;
 }
 
 export function useAgentBridge(config: AgentBridgeConfig): AgentBridge {
-  const interpret = useCallback(async (_request: InterpretRequest): Promise<ActionIntent | null> => {
-    if (!config.enabled) return null;
-    // Future: POST to /api/agent/interpret
-    return null;
-  }, [config.enabled]);
+  const systemPrompt = useMemo(
+    () => config.actions ? buildSystemPrompt(config.actions) : '',
+    [config.actions],
+  );
 
-  const isAvailable = useCallback(() => config.enabled, [config.enabled]);
+  const stream = useOllamaStream({
+    systemPrompt,
+    enabled: config.enabled,
+  });
 
-  return useMemo(() => ({ interpret, isAvailable }), [interpret, isAvailable]);
+  // Wire LLM responses to action callback
+  useEffect(() => {
+    stream.onResponse.current = (response: OllamaResponse) => {
+      if (response.type === 'action') {
+        config.onAction?.current?.(response.intent);
+      }
+    };
+  }, [stream, config.onAction]);
+
+  const interpret = useCallback(async (request: InterpretRequest): Promise<ActionIntent | null> => {
+    if (!config.enabled || !stream.isConnected) return null;
+    const spatial = config.spatialRef?.current;
+    const message = formatGestureMessage(request.currentGesture, spatial);
+    stream.send(message);
+    return null; // response comes async via onResponse
+  }, [config.enabled, config.spatialRef, stream]);
+
+  const isAvailable = useCallback(() => config.enabled && stream.isConnected, [config.enabled, stream.isConnected]);
+
+  return useMemo(() => ({
+    interpret,
+    isAvailable,
+    isConnected: stream.isConnected,
+    debugRef: stream.debugRef,
+  }), [interpret, isAvailable, stream.isConnected, stream.debugRef]);
 }

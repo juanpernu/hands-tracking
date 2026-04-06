@@ -47,8 +47,18 @@ import {
   notificationsPlugin,
 } from './plugins/built-in';
 import type { GestureMapping } from './agent/types';
-import type { ActionIntent } from './plugins/types';
+import type { ActionIntent, ActionResult } from './plugins/types';
 import type { SpatialEvent, SpatialTelemetryData } from './types/spatial';
+import { GestureFeedbackPanel } from './components/telemetry/GestureFeedbackPanel';
+import type { GestureFeedbackEntry } from './components/telemetry/GestureFeedbackPanel';
+import { useTapDetection } from './hooks/useTapDetection';
+import TapRipple from './components/TapRipple';
+import type { TapRippleHandle } from './components/TapRipple';
+import { NavigationBar } from './components/NavigationBar';
+import type { NavigationBarHandle } from './components/NavigationBar';
+import { useDepthTracking } from './hooks/useDepthTracking';
+import { DepthIndicator } from './components/DepthIndicator';
+import { NAV_BAR } from './config';
 
 // ---- Ring buffer for timeline entries ----------------------------------------
 
@@ -94,9 +104,6 @@ const MemoDualHandHUD = memo(DualHandHUD);
 
 const defaultMappings: GestureMapping[] = [
   { gesture: 'clap', action: 'browser.fullscreen:toggle' },
-  { gesture: 'shake', action: 'dom.navigation:go-back' },
-  { gesture: 'swipe-left', action: 'dom.navigation:go-back' },
-  { gesture: 'swipe-right', action: 'dom.navigation:go-forward' },
   { gesture: 'both-spread', action: 'dom.tabs:close-tab' },
   { gesture: 'both-pinch', action: 'dom.tabs:open-tab' },
   { gesture: 'grip-thumbs-up', action: 'browser.notifications:show-notification', params: { title: 'Thumbs Up! 👍' } },
@@ -115,7 +122,7 @@ export default function App() {
   const { hands, isReady, error, videoRef } = useHandTracking();
   const detectGesture = useGestureDetection();
   const { positionRef: mousePosRef, isGrabbing: mouseGrabbing, containerRef } = useMouseFallback();
-  const { objects, addObject, removeObject, moveObject, hitTest } = useObjectManagement(0);
+  const { objects, addObject, removeObject, moveObject, releaseObject, toggleSize, hitTest } = useObjectManagement(0);
 
   // --- Analysis hooks ---
   const { physicsData, gripData, motionData, featuresData, gripRef, computeFrame } = useHandAnalysis();
@@ -123,7 +130,7 @@ export default function App() {
   // --- Telemetry hooks ---
   const { record } = useTelemetryRecorder();
   const { log, processFrame, addEntry, clearLog, exportLog, onClapRef } = useTelemetryLogger();
-  const { record: recordBatch } = useBatchTelemetry();
+  const { record: recordBatch, recordEvent: recordBatchEvent } = useBatchTelemetry();
 
   // --- Spatial tracking hooks ---
   const spatialIndex = useDOMSpatialIndex();
@@ -157,7 +164,13 @@ export default function App() {
     clipboardPlugin, speechPlugin, notificationsPlugin,
   ]);
   const dispatcher = useActionDispatcher(registry);
-  const bridge = useAgentBridge({ enabled: false });
+  const onLLMActionRef = useRef<((intent: ActionIntent) => void) | null>(null);
+  const bridge = useAgentBridge({
+    enabled: true,
+    actions: registry.listAll().flatMap(p => p.actions),
+    spatialRef: handOverDOM.handSpatialRef,
+    onAction: onLLMActionRef,
+  });
   const contextBuffer = useContextBuffer({ maxEvents: 50, maxMs: 10000 });
   const { toasts, addToast } = useActionToast();
 
@@ -166,6 +179,11 @@ export default function App() {
     addToast(intent.action, `${intent.plugin}:${intent.action}`, result);
     return result;
   }, [dispatcher, addToast]);
+
+  // Wire LLM async responses to the same action handler
+  useEffect(() => {
+    onLLMActionRef.current = handleAction;
+  }, [handleAction]);
 
   const interpreter = useGestureInterpreter({
     mappings: defaultMappings,
@@ -181,22 +199,67 @@ export default function App() {
     onGestureEvent: interpreter.handle,
   });
 
+  const originalHandleRef = useRef(interpreter.handle);
+  originalHandleRef.current = interpreter.handle;
+
+  const handleWithFeedback = useCallback((event: import('./agent/types').AgentGestureEvent) => {
+    const spatial = handOverDOM.handSpatialRef.current;
+    const hand = spatial?.right ?? spatial?.left;
+    const selector = hand?.hoverTarget?.selector;
+    setGestureFeedbackLog((prev) => {
+      const entry: GestureFeedbackEntry = {
+        id: ++gestureFeedbackIdRef.current,
+        gesture: event.type,
+        timestamp: performance.now(),
+        spatial: selector,
+      };
+      const next = [...prev, entry];
+      return next.length > 15 ? next.slice(-15) : next;
+    });
+    const eventData = {
+      type: 'gesture-detected',
+      timestamp: performance.now(),
+      gesture: event.type,
+      spatial: selector,
+      hands: event.hands.length,
+      grip: event.grip?.[0]?.gripType,
+    };
+    addEntry({
+      type: 'gesture-detected',
+      timestamp: eventData.timestamp,
+      description: `${event.type}${selector ? ` on ${selector}` : ''}`,
+      data: eventData,
+    });
+    recordBatchEvent(eventData);
+    originalHandleRef.current(event);
+  }, [handOverDOM, addEntry, recordBatchEvent]);
+
   // --- Interaction controller (depends on interpreter.handle) ---
   const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake, updateMotion } =
-    useInteractionController({ onGestureEvent: interpreter.handle });
+    useInteractionController({ onGestureEvent: handleWithFeedback });
 
   // --- UI state ---
   const [telemetryVisible, setTelemetryVisible] = useState(true);
   const [fps, setFps] = useState(0);
-  const [flashActive, setFlashActive] = useState(false);
   const [spatialEventLog, setSpatialEventLog] = useState<SpatialEvent[]>([]);
+  const [gestureFeedbackLog, setGestureFeedbackLog] = useState<GestureFeedbackEntry[]>([]);
+  const gestureFeedbackIdRef = useRef(0);
 
   // --- Refs ---
   const cursorRef = useRef<HTMLDivElement>(null);
   const leftCursorRef = useRef<HTMLDivElement>(null);
   const leftCursorSmoothed = useRef({ x: 0, y: 0, initialized: false });
   const gripIndicatorRef = useRef<HTMLDivElement>(null);
+  const tapRippleRef = useRef<TapRippleHandle>(null);
+  const navBarRef = useRef<NavigationBarHandle>(null);
+  const navZoneRef = useRef({ enterTime: 0, triggered: false });
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
+
+  // --- Tap detection ---
+  const { detect: detectTap, debugRef: tapDebugRef } = useTapDetection();
+
+  // --- Depth tracking ---
+  const { update: updateDepth, stateRef: depthRef } = useDepthTracking();
 
   // Ring buffer for timeline entries (never reallocated)
   const timelineBufferRef = useRef<TimelineRingBuffer>(makeTimelineBuffer());
@@ -218,6 +281,8 @@ export default function App() {
   const mouseGrabbingRef = useRef(mouseGrabbing);
   mouseGrabbingRef.current = mouseGrabbing;
   const grabbedIdRef = useRef(grabbedId);
+  const prevGrabbedIdRef = useRef<string | null>(null);
+  const prevGrabbedIdLeftRef = useRef<string | null>(null);
   grabbedIdRef.current = grabbedId;
   const grabbedIdLeftRef = useRef(grabbedIdLeft);
   grabbedIdLeftRef.current = grabbedIdLeft;
@@ -281,8 +346,23 @@ export default function App() {
     updateShake(currentHands, physics, motions, currentObjects, removeObject, now);
     updateMotion(motions, currentHands);
 
-    // 4. Detect gesture
+    // 3.5 Detect taps early (before gesture detection, to suppress pinch during tap)
+    const taps = detectTap(currentHands, now);
+
+    // 4. Detect gesture (pinch suppressed if tap is in active state)
     const gesture = detectGesture(currentHands);
+
+    // Suppress single-hand pinch if tap is active on that hand.
+    // Do NOT suppress isBothPinching — both-pinch is intentional (create/delete objects).
+    const tapState = tapDebugRef.current;
+    if (gesture) {
+      if (tapState.right?.state && tapState.right.state !== 'idle') {
+        gesture.isPinching = false;
+      }
+      if (tapState.left?.state && tapState.left.state !== 'idle') {
+        gesture.isLeftPinching = false;
+      }
+    }
 
     // 5. Run interaction controller — returns cursor pixel + resolved gesture or null
     const result = update(
@@ -303,6 +383,9 @@ export default function App() {
         H: currentH,
       },
     );
+
+    // 5.4 Depth tracking
+    updateDepth(currentHands);
 
     // 5.5 Spatial tracking — runs independently of interaction result
     // Track each hand's position over DOM elements
@@ -335,6 +418,16 @@ export default function App() {
     } else {
       spatialFeedback.clearDrag('Left');
     }
+
+    // Detect grab release → trigger momentum
+    if (prevGrabbedIdRef.current && !currentGrabbedRight) {
+      releaseObject(prevGrabbedIdRef.current);
+    }
+    if (prevGrabbedIdLeftRef.current && !currentGrabbedLeft) {
+      releaseObject(prevGrabbedIdLeftRef.current);
+    }
+    prevGrabbedIdRef.current = currentGrabbedRight;
+    prevGrabbedIdLeftRef.current = currentGrabbedLeft;
 
     // Clear spatial state for hands that disappeared
     if (currentHands.length === 0) {
@@ -377,6 +470,103 @@ export default function App() {
       }
     }
 
+    // 6.5 Tap action — events collected at step 3.5
+    for (const tap of taps) {
+      const px = (1 - tap.position.x) * currentW;
+      const py = tap.position.y * currentH;
+      const el = document.elementFromPoint(px, py);
+
+      // Log tap to gesture feedback + batch telemetry
+      const spatial = handOverDOM.handSpatialRef.current;
+      const hand = spatial?.right ?? spatial?.left;
+      const tapSelector = hand?.hoverTarget?.selector;
+      const tapEventData = {
+        type: 'gesture-detected',
+        timestamp: now,
+        gesture: 'tap',
+        spatial: tapSelector,
+        fingerDip: tap.fingerDip,
+        targetElement: el?.tagName,
+      };
+      addEntry({
+        type: 'gesture-detected',
+        timestamp: now,
+        description: `tap${tapSelector ? ` on ${tapSelector}` : ''}`,
+        data: tapEventData,
+      });
+      recordBatchEvent(tapEventData);
+      setGestureFeedbackLog((prev) => {
+        const entry: GestureFeedbackEntry = {
+          id: ++gestureFeedbackIdRef.current,
+          gesture: 'tap',
+          timestamp: now,
+          spatial: tapSelector,
+        };
+        const next = [...prev, entry];
+        return next.length > 15 ? next.slice(-15) : next;
+      });
+
+      // Check if tap hit a draggable object → toggle size, otherwise click element
+      const tappedObjectId = hitTest({ x: px, y: py });
+      if (tappedObjectId) {
+        toggleSize(tappedObjectId);
+        tapRippleRef.current?.trigger(px, py);
+      } else if (el && el instanceof HTMLElement) {
+        el.click();
+        tapRippleRef.current?.trigger(px, py);
+      }
+    }
+
+    // 6.6 Navigation bar trigger — hand hovering in top-center zone for 1.5s
+    const navState = navZoneRef.current;
+    const anyHandInZone = currentHands.some((hand) => {
+      const lm8 = hand.landmarks[8];
+      if (!lm8) return false;
+      const nx = 1 - lm8.x;
+      const ny = lm8.y;
+      return ny < NAV_BAR.TRIGGER_ZONE_TOP && nx > NAV_BAR.TRIGGER_ZONE_LEFT && nx < NAV_BAR.TRIGGER_ZONE_RIGHT;
+    });
+
+    if (anyHandInZone) {
+      if (navState.enterTime === 0) navState.enterTime = now;
+      if (now - navState.enterTime >= NAV_BAR.HOVER_TRIGGER_MS && !navState.triggered) {
+        navState.triggered = true;
+        navBarRef.current?.show();
+      }
+    } else {
+      navState.enterTime = 0;
+      navState.triggered = false;
+    }
+
+    // 6.7 Velocity-based scroll — palm movement directly drives iframe scroll
+    // Only active when hand is in optimal depth zone (calibrated)
+    const depthState = depthRef.current.right ?? depthRef.current.left;
+    const inOptimalZone = depthState?.zone === 'optimal';
+
+    if (physics.length > 0 && inOptimalZone) {
+      const primaryPhys = physics[0];
+      if (primaryPhys) {
+        const vy = primaryPhys.palmVelocity.y;
+        const vx = primaryPhys.palmVelocity.x;
+        const speed = Math.sqrt(vx * vx + vy * vy);
+        const noObjectGrabbed = !currentGrabbedRight && !currentGrabbedLeft;
+
+        // Scroll when palm moves fast enough and no object is grabbed
+        if (speed > 0.15 && noObjectGrabbed) {
+          const scrollX = Math.round(-vx * currentW * 0.3);
+          const scrollY = Math.round(vy * currentH * 0.3);
+          if (Math.abs(scrollX) > 2 || Math.abs(scrollY) > 2) {
+            // Try navBar iframe first, fallback to window scroll
+            if (navBarRef.current?.hasIframe) {
+              navBarRef.current.scrollBy(scrollX, scrollY);
+            } else {
+              window.scrollBy(scrollX, scrollY);
+            }
+          }
+        }
+      }
+    }
+
     // 7. Update timeline ring buffer
     const primaryPhysics = physics[0];
     const primarySpeed = primaryPhysics ? magnitude3(primaryPhysics.palmVelocity) * currentW : 0;
@@ -408,10 +598,13 @@ export default function App() {
     addObject,
     removeObject,
     moveObject,
+    releaseObject,
     mousePosRef,
     spatialIndex,
     handOverDOM,
     spatialFeedback,
+    detectTap,
+    updateDepth,
   ]);
 
   // Store latest runFrame in a ref so the RAF loop always calls the latest version
@@ -483,59 +676,44 @@ export default function App() {
     };
   }, [edgeWarning]);
 
-  // Clap → screenshot via canvas capture
-  // INVARIANT: Clap is detected exclusively by useTelemetryLogger (external audio/heuristic),
-  // NOT by useInteractionController. The controller must NEVER emit 'clap' to avoid double-dispatch,
-  // since this handler already calls interpreter.handle for clap events.
+  const handleGestureConfirm = useCallback((id: number) => {
+    setGestureFeedbackLog((prev) => {
+      const entry = prev.find((e) => e.id === id);
+      if (entry) {
+        addEntry({
+          type: 'gesture-confirm',
+          timestamp: performance.now(),
+          description: `Confirmed: ${entry.gesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
+          data: { type: 'gesture-confirm', gesture: entry.gesture, spatial: entry.spatial },
+        });
+        recordBatchEvent({ type: 'gesture-confirm', timestamp: performance.now(), gesture: entry.gesture, spatial: entry.spatial });
+      }
+      return prev.map((e) => (e.id === id ? { ...e, feedback: 'correct' as const } : e));
+    });
+  }, [addEntry, recordBatchEvent]);
+
+  const handleGestureCorrect = useCallback((id: number, correctGesture: string) => {
+    setGestureFeedbackLog((prev) => {
+      const entry = prev.find((e) => e.id === id);
+      if (entry) {
+        addEntry({
+          type: 'gesture-correction',
+          timestamp: performance.now(),
+          description: `Correction: ${entry.gesture} → ${correctGesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
+          data: { type: 'gesture-correction', detected: entry.gesture, correct: correctGesture, spatial: entry.spatial },
+        });
+        recordBatchEvent({ type: 'gesture-correction', timestamp: performance.now(), detected: entry.gesture, correct: correctGesture, spatial: entry.spatial });
+      }
+      return prev.map((e) => (e.id === id ? { ...e, feedback: 'incorrect' as const, correction: correctGesture } : e));
+    });
+  }, [addEntry, recordBatchEvent]);
+
+  // Clap → send to gesture interpreter only (no screenshot)
   useEffect(() => {
     onClapRef.current = () => {
-      interpreter.handle({ type: 'clap', hands: handsRef.current, timestamp: performance.now() });
-      setFlashActive(true);
-      setTimeout(() => setFlashActive(false), 200);
-
-      const el = containerRef.current;
-      if (!el) return;
-
-      const canvas = document.createElement('canvas');
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Copy all visible canvases (skeleton, vectors, timeline)
-      const canvases = el.querySelectorAll('canvas');
-      canvases.forEach((c) => {
-        const rect = c.getBoundingClientRect();
-        try { ctx.drawImage(c, rect.left, rect.top); } catch { /* cross-origin */ }
-      });
-
-      // Copy camera video if visible
-      const video = el.querySelector('video');
-      if (video) {
-        const rect = video.getBoundingClientRect();
-        try { ctx.drawImage(video, rect.left, rect.top, rect.width, rect.height); } catch { /* */ }
-      }
-
-      // Draw colored squares
-      const squares = el.querySelectorAll('[style*="border-radius: 8px"][style*="background-color"]');
-      squares.forEach((sq) => {
-        const style = (sq as HTMLElement).style;
-        const rect = (sq as HTMLElement).getBoundingClientRect();
-        ctx.fillStyle = style.backgroundColor;
-        ctx.beginPath();
-        ctx.roundRect(rect.left, rect.top, rect.width, rect.height, 8);
-        ctx.fill();
-      });
-
-      const link = document.createElement('a');
-      link.download = `clap-screenshot-${Date.now()}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
+      handleWithFeedback({ type: 'clap', hands: handsRef.current, timestamp: performance.now() });
     };
-  }, [onClapRef, containerRef, interpreter.handle]);
+  }, [onClapRef, handleWithFeedback]);
 
   const primaryGrip = gripData[0];
 
@@ -553,13 +731,14 @@ export default function App() {
         transition: edgeWarning === 'near' ? 'none' : 'border-color 300ms ease, box-shadow 300ms ease',
       }}
     >
-      {/* Screenshot flash */}
-      {flashActive && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'white',
-          opacity: 0.8, zIndex: 9999, pointerEvents: 'none',
-        }} />
-      )}
+      {/* Navigation bar */}
+      <NavigationBar ref={navBarRef} />
+
+      {/* Tap ripple feedback */}
+      <TapRipple ref={tapRippleRef} />
+
+      {/* Depth indicator */}
+      <DepthIndicator depthRef={depthRef} visible={true} />
 
       {/* Objects + cursor */}
       {objects.map((obj) => (
@@ -691,6 +870,16 @@ export default function App() {
             <SpatialHUD
               handSpatialRef={handOverDOM.handSpatialRef}
               spatialEvents={spatialEventLog}
+              ollamaConnected={bridge.isConnected}
+              ollamaDebugRef={bridge.debugRef}
+            />
+          </DraggablePanel>
+
+          <DraggablePanel initialX={W - 250} initialY={H - 280} handCursors={panelHandCursors}>
+            <GestureFeedbackPanel
+              entries={gestureFeedbackLog}
+              onConfirm={handleGestureConfirm}
+              onCorrect={handleGestureCorrect}
             />
           </DraggablePanel>
         </>

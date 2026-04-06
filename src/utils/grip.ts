@@ -51,6 +51,30 @@ export function classifyGrip(
 ): GripType {
   const [thumbCurl, indexCurl, middleCurl, ringCurl, pinkyCurl] = fingerCurl;
 
+  // Pinch MUST be checked BEFORE open — during a natural pinch, fingers
+  // remain largely extended (curls ~0.05-0.13), which would match "open"
+  // and skip the pinch check entirely.
+  // Detected by fingertip proximity: thumb(4) + index(8) or + middle(12).
+  const thumbTip = landmarks[LANDMARK.THUMB_TIP];
+  const indexTip = landmarks[LANDMARK.INDEX_TIP];
+  const middleTip = landmarks[LANDMARK.MIDDLE_TIP];
+
+  if (thumbTip && indexTip) {
+    const thumbIndexDist = distance3d(thumbTip, indexTip);
+    const thumbMiddleDist = middleTip ? distance3d(thumbTip, middleTip) : Infinity;
+    const indexMiddleDist = middleTip ? distance3d(indexTip, middleTip) : Infinity;
+
+    const threeFingerPinch = thumbIndexDist < GRIP.PINCH_TIP_DISTANCE
+      && thumbMiddleDist < GRIP.PINCH_TIP_DISTANCE
+      && indexMiddleDist < GRIP.PINCH_TIP_DISTANCE;
+
+    const twoFingerPinch = thumbIndexDist < GRIP.PINCH_TIP_DISTANCE;
+
+    if (threeFingerPinch || twoFingerPinch) {
+      return 'pinch';
+    }
+  }
+
   // Fist: every finger tightly curled.
   if (thumbCurl > GRIP.FIST_THRESHOLD && indexCurl > GRIP.FIST_THRESHOLD && middleCurl > GRIP.FIST_THRESHOLD && ringCurl > GRIP.FIST_THRESHOLD && pinkyCurl > GRIP.FIST_THRESHOLD) {
     return 'fist';
@@ -59,21 +83,6 @@ export function classifyGrip(
   // Open: every finger extended.
   if (thumbCurl < GRIP.OPEN_THRESHOLD && indexCurl < GRIP.OPEN_THRESHOLD && middleCurl < GRIP.OPEN_THRESHOLD && ringCurl < GRIP.OPEN_THRESHOLD && pinkyCurl < GRIP.OPEN_THRESHOLD) {
     return 'open';
-  }
-
-  // Pinch: thumb + index extended, others curled, and tips close together.
-  if (
-    thumbCurl < GRIP.PINCH_OPEN_THRESHOLD &&
-    indexCurl < GRIP.PINCH_OPEN_THRESHOLD &&
-    middleCurl > GRIP.PINCH_CURL_THRESHOLD &&
-    ringCurl > GRIP.PINCH_CURL_THRESHOLD &&
-    pinkyCurl > GRIP.PINCH_CURL_THRESHOLD
-  ) {
-    const thumbTip = landmarks[LANDMARK.THUMB_TIP];
-    const indexTip = landmarks[LANDMARK.INDEX_TIP];
-    if (thumbTip && indexTip && distance3d(thumbTip, indexTip) < GRIP.PINCH_TIP_DISTANCE) {
-      return 'pinch';
-    }
   }
 
   // Point: index extended, middle/ring/pinky curled.

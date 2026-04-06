@@ -25,8 +25,8 @@ export const FINGER_CHAINS = [
 
 // --- Gesture Detection ---
 export const GESTURE = {
-  PINCH_ENTER_THRESHOLD: 0.05,
-  PINCH_EXIT_THRESHOLD: 0.07,
+  PINCH_ENTER_THRESHOLD: 0.04,
+  PINCH_EXIT_THRESHOLD: 0.06,
   SPREAD_THRESHOLD: 0.3,
   LERP_FACTOR: 0.3,
 } as const;
@@ -37,8 +37,8 @@ export const GRIP = {
   FIST_THRESHOLD: 0.7,
   OPEN_THRESHOLD: 0.3,
   PINCH_OPEN_THRESHOLD: 0.3,
-  PINCH_CURL_THRESHOLD: 0.5,
-  PINCH_TIP_DISTANCE: 0.05,
+  PINCH_TIP_DISTANCE: 0.04,
+  PINCH_SUSTAIN_FRAMES: 2,   // must hold proximity for N frames to confirm pinch
   POINT_OPEN_THRESHOLD: 0.3,
   POINT_CURL_THRESHOLD: 0.6,
   NON_THUMB_FINGER_COUNT: 4,
@@ -245,4 +245,44 @@ export const SPATIAL = {
   MAX_PROXIMITY_TARGETS: 3,
   HUD_EVENT_FEED_MAX: 20,
   HUD_THROTTLE_MS: 100,
+} as const;
+
+// --- Ollama LLM ---
+export const OLLAMA = {
+  MODEL: 'gemma4:e2b',
+  BASE_URL: 'http://localhost:11434',
+  KEEP_ALIVE_MS: 300_000,
+  RECONNECT_BASE_MS: 1000,
+  RECONNECT_MAX_MS: 30_000,
+  MAX_CONTEXT_MESSAGES: 100,
+  DEBOUNCE_MS: 100,
+} as const;
+
+// --- Tap Gesture ---
+export const TAP = {
+  THRESHOLD: 0.015,             // min dip from baseline to detect tap-down
+  RELEASE_THRESHOLD: 0.008,     // dip must return below this to confirm tap-up
+  VELOCITY_THRESHOLD: 0.004,    // min velocity to trigger (prevents slow drift)
+  DOUBLE_TAP_WINDOW_MS: 500,    // forgiving window
+  RIPPLE_DURATION_MS: 300,
+  RIPPLE_SIZE: 40,
+} as const;
+
+// --- Navigation Bar ---
+export const NAV_BAR = {
+  TRIGGER_ZONE_TOP: 0.05,      // top 5% of screen height (normalized)
+  TRIGGER_ZONE_LEFT: 0.25,     // center 50% of screen width (25% to 75%)
+  TRIGGER_ZONE_RIGHT: 0.75,
+  HOVER_TRIGGER_MS: 1500,      // hold hand in zone for 1.5s to trigger
+} as const;
+
+// --- Depth Tracking ---
+export const DEPTH = {
+  // Hand size thresholds (distance between wrist and middle finger tip, normalized)
+  // These auto-calibrate after CALIBRATION_FRAMES
+  CALIBRATION_FRAMES: 90,       // ~3 seconds at 30fps
+  OPTIMAL_ZONE_MARGIN: 0.15,    // ±15% of calibrated mean
+  TOO_CLOSE_MULTIPLIER: 1.3,    // 30% larger than mean = too close
+  TOO_FAR_MULTIPLIER: 0.7,      // 30% smaller than mean = too far
+  SMOOTHING_ALPHA: 0.1,         // EMA smoothing for hand size
 } as const;
