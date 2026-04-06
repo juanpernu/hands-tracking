@@ -78,7 +78,10 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
 
   // ─── Pattern detectors ─────────────────────────────────────────────────────
 
-  function detectSwipe(timestamp: number): MotionPattern | null {
+  function detectSwipe(timestamp: number, currentPhase: GesturePhase): MotionPattern | null {
+    // Only detect swipe during active gesture phases (stroke or preparation→stroke transition)
+    if (currentPhase === 'idle' || currentPhase === 'retraction') return null;
+
     const SPEED_THRESHOLD = MOTION.SWIPE_SPEED_THRESHOLD;
     const MIN_FRAMES = MOTION.SWIPE_MIN_FRAMES;
 
@@ -128,6 +131,9 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
     const absX = Math.abs(dominantVx);
     const absY = Math.abs(dominantVy);
 
+    // Boost confidence when phase is 'stroke' (user was "winding up" through preparation)
+    const phaseBoost = currentPhase === 'stroke' ? 0.1 : 0;
+
     if (consecutiveX >= MIN_FRAMES && absX >= absY) {
       const direction: SwipeDirection = dominantVx > 0 ? 'right' : 'left';
       const newest = fromNewest(0);
@@ -135,7 +141,7 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
       const durationMs = newest && oldest ? newest.timestamp - oldest.timestamp : 0;
       return {
         type: 'swipe',
-        confidence: clamp(latestSpeed / 1.5, 0, 1),
+        confidence: clamp((latestSpeed / 1.5) + phaseBoost, 0, 1),
         swipeDirection: direction,
         durationMs,
         timestamp,
@@ -150,7 +156,7 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
       const durationMs = newest && oldest ? newest.timestamp - oldest.timestamp : 0;
       return {
         type: 'swipe',
-        confidence: clamp(latestSpeed / 1.5, 0, 1),
+        confidence: clamp((latestSpeed / 1.5) + phaseBoost, 0, 1),
         swipeDirection: direction,
         durationMs,
         timestamp,
@@ -314,7 +320,7 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
 
       // Priority: swipe > circular > acceleration-burst > static-hold > none
       const pattern =
-        detectSwipe(timestamp) ??
+        detectSwipe(timestamp, confirmedPhase) ??
         detectCircular(timestamp) ??
         detectAccelerationBurst(timestamp) ??
         detectStaticHold(timestamp) ??
