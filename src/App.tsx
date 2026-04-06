@@ -447,6 +447,37 @@ export default function App() {
       const px = (1 - tap.position.x) * currentW;
       const py = tap.position.y * currentH;
       const el = document.elementFromPoint(px, py);
+
+      // Log tap to gesture feedback + batch telemetry
+      const spatial = handOverDOM.handSpatialRef.current;
+      const hand = spatial?.right ?? spatial?.left;
+      const tapSelector = hand?.hoverTarget?.selector;
+      const tapEventData = {
+        type: 'gesture-detected',
+        timestamp: now,
+        gesture: 'tap',
+        spatial: tapSelector,
+        tipToPalmDist: tap.tipToPalmDist,
+        targetElement: el?.tagName,
+      };
+      addEntry({
+        type: 'gesture-detected',
+        timestamp: now,
+        description: `tap${tapSelector ? ` on ${tapSelector}` : ''}`,
+        data: tapEventData,
+      });
+      recordBatchEvent(tapEventData);
+      setGestureFeedbackLog((prev) => {
+        const entry: GestureFeedbackEntry = {
+          id: ++gestureFeedbackIdRef.current,
+          gesture: 'tap',
+          timestamp: now,
+          spatial: tapSelector,
+        };
+        const next = [...prev, entry];
+        return next.length > 15 ? next.slice(-15) : next;
+      });
+
       if (el && el instanceof HTMLElement) {
         el.click();
         tapRippleRef.current?.trigger(px, py);

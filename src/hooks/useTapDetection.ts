@@ -7,10 +7,17 @@ export interface TapEvent {
   handedness: 'Left' | 'Right';
   position: { x: number; y: number; z: number };
   timestamp: number;
+  tipToPalmDist: number;
+}
+
+export interface TapDebugState {
+  tipToPalmDist: number;
+  state: TapState;
 }
 
 export interface UseTapDetectionReturn {
   detect: (hands: HandData[], timestamp: number) => TapEvent[];
+  debugRef: React.MutableRefObject<{ left: TapDebugState | null; right: TapDebugState | null }>;
 }
 
 type TapState = 'idle' | 'tap-down' | 'first-tap' | 'double-tap-down';
@@ -24,6 +31,7 @@ const PALM_LANDMARK_INDICES = [0, 5, 9, 13, 17] as const;
 
 export function useTapDetection(): UseTapDetectionReturn {
   const stateMap = useRef<Map<string, HandTapState>>(new Map());
+  const debugRef = useRef<{ left: TapDebugState | null; right: TapDebugState | null }>({ left: null, right: null });
 
   const detect = useCallback((hands: HandData[], timestamp: number): TapEvent[] => {
     const events: TapEvent[] = [];
@@ -42,6 +50,9 @@ export function useTapDetection(): UseTapDetectionReturn {
 
       const indexTip = hand.landmarks[8];
       const tipToPalmDist = distance3d(indexTip, palmCenter);
+
+      // Update debug state
+      const debugKey = key === 'Left' ? 'left' : 'right';
 
       let handState = stateMap.current.get(key);
       if (!handState) {
@@ -77,11 +88,14 @@ export function useTapDetection(): UseTapDetectionReturn {
               handedness: hand.handedness,
               position: { x: indexTip.x, y: indexTip.y, z: indexTip.z },
               timestamp,
+              tipToPalmDist,
             });
             handState.state = 'idle';
           }
           break;
       }
+
+      debugRef.current[debugKey] = { tipToPalmDist, state: handState.state };
     }
 
     // Clean up state for hands that disappeared
@@ -94,5 +108,5 @@ export function useTapDetection(): UseTapDetectionReturn {
     return events;
   }, []);
 
-  return { detect };
+  return { detect, debugRef };
 }
