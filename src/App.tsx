@@ -452,12 +452,15 @@ export default function App() {
       }
     }
 
-    // 6.7 Pinch scroll — when pinching with no object grabbed, scroll the iframe
+    // 6.7 Pinch/partial-grip scroll — scroll iframe when gripping with no object grabbed
     if (navBarRef.current?.hasIframe && gesture) {
       const isPinching = gesture.isPinching;
+      // Also trigger scroll on partial grip (user closing hand without full pinch)
+      const isPartialGrip = grips.some((g) => g.gripType === 'partial' || g.gripType === 'pinch');
+      const scrollTrigger = isPinching || isPartialGrip;
       const noObjectGrabbed = !currentGrabbedRight && !currentGrabbedLeft;
 
-      if (isPinching && noObjectGrabbed && result) {
+      if (scrollTrigger && noObjectGrabbed && result) {
         const sd = scrollDragRef.current;
         if (!sd.active) {
           sd.active = true;
