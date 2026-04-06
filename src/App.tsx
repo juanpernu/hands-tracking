@@ -236,7 +236,6 @@ export default function App() {
   const tapRippleRef = useRef<TapRippleHandle>(null);
   const navBarRef = useRef<NavigationBarHandle>(null);
   const navZoneRef = useRef({ enterTime: 0, triggered: false });
-  const scrollDragRef = useRef({ active: false, lastX: 0, lastY: 0, releaseTime: 0 });
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
 
   // --- Tap detection ---
@@ -452,41 +451,25 @@ export default function App() {
       }
     }
 
-    // 6.7 Pinch/partial-grip scroll — scroll iframe when gripping with no object grabbed
-    if (navBarRef.current?.hasIframe && result) {
-      const isPinching = gesture?.isPinching ?? false;
-      const isPartialGrip = grips.some((g) => g.gripType === 'partial' || g.gripType === 'pinch' || g.gripType === 'fist');
-      const scrollTrigger = isPinching || isPartialGrip;
-      const noObjectGrabbed = !currentGrabbedRight && !currentGrabbedLeft;
-      const sd = scrollDragRef.current;
+    // 6.7 Velocity-based scroll — palm movement directly drives iframe scroll
+    if (navBarRef.current?.hasIframe && physics.length > 0) {
+      const primaryPhys = physics[0];
+      if (primaryPhys) {
+        const vy = primaryPhys.palmVelocity.y;
+        const vx = primaryPhys.palmVelocity.x;
+        const speed = Math.sqrt(vx * vx + vy * vy);
+        const noObjectGrabbed = !currentGrabbedRight && !currentGrabbedLeft;
 
-      if (scrollTrigger && noObjectGrabbed) {
-        sd.releaseTime = 0;
-        if (!sd.active) {
-          sd.active = true;
-          sd.lastX = result.cursorPixel.x;
-          sd.lastY = result.cursorPixel.y;
-        } else {
-          const deltaX = sd.lastX - result.cursorPixel.x;
-          const deltaY = sd.lastY - result.cursorPixel.y;
-          if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
-            navBarRef.current.scrollBy(Math.round(deltaX * 3), Math.round(deltaY * 3));
-            sd.lastX = result.cursorPixel.x;
-            sd.lastY = result.cursorPixel.y;
+        // Scroll when palm moves fast enough and no object is grabbed
+        if (speed > 0.15 && noObjectGrabbed) {
+          // Map palm velocity directly to scroll pixels
+          // Negative vy = hand moving up = scroll up, positive = scroll down
+          const scrollX = Math.round(-vx * currentW * 0.3);
+          const scrollY = Math.round(vy * currentH * 0.3);
+          if (Math.abs(scrollX) > 2 || Math.abs(scrollY) > 2) {
+            navBarRef.current.scrollBy(scrollX, scrollY);
           }
         }
-      } else if (sd.active) {
-        // Debounce release — grip can flicker between open/partial
-        if (sd.releaseTime === 0) {
-          sd.releaseTime = now;
-        } else if (now - sd.releaseTime > 300) {
-          // Only deactivate after 300ms of no grip
-          sd.active = false;
-          sd.releaseTime = 0;
-        }
-        // Keep updating position during debounce to maintain continuity
-        sd.lastX = result.cursorPixel.x;
-        sd.lastY = result.cursorPixel.y;
       }
     }
 
