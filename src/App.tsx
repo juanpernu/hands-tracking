@@ -335,14 +335,16 @@ export default function App() {
     // 4. Detect gesture (pinch suppressed if tap is in active state)
     const gesture = detectGesture(currentHands);
 
-    // Suppress pinch if tap detector is in an active state (tap-down, first-tap, double-tap-down)
+    // Suppress single-hand pinch if tap is active on that hand.
+    // Do NOT suppress isBothPinching — both-pinch is intentional (create/delete objects).
     const tapState = tapDebugRef.current;
-    const tapActive = (tapState.right?.state && tapState.right.state !== 'idle')
-      || (tapState.left?.state && tapState.left.state !== 'idle');
-    if (tapActive && gesture) {
-      gesture.isPinching = false;
-      gesture.isLeftPinching = false;
-      gesture.isBothPinching = false;
+    if (gesture) {
+      if (tapState.right?.state && tapState.right.state !== 'idle') {
+        gesture.isPinching = false;
+      }
+      if (tapState.left?.state && tapState.left.state !== 'idle') {
+        gesture.isLeftPinching = false;
+      }
     }
 
     // 5. Run interaction controller — returns cursor pixel + resolved gesture or null
