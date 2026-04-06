@@ -1,7 +1,7 @@
 import { useRef, useCallback } from 'react';
 import type { HandData } from '../types';
 import { distance, lerp } from '../utils/geometry';
-import { LANDMARK, GESTURE } from '../config';
+import { LANDMARK, GESTURE, GRIP } from '../config';
 
 export interface GestureResult {
   primaryCursor: { x: number; y: number } | null;
@@ -25,6 +25,8 @@ export function useGestureDetection() {
 
   // Per-hand pinch state for hysteresis (keyed by handedness)
   const pinchStateRef = useRef<Record<string, boolean>>({});
+  // Per-hand sustained proximity counter (keyed by handedness)
+  const pinchSustainRef = useRef<Record<string, number>>({});
 
   const detect = useCallback((hands: HandData[]): GestureResult => {
     if (hands.length === 0) {
@@ -65,8 +67,9 @@ export function useGestureDetection() {
     }
 
     // --- Per-hand pinch / spread detection ---
-    // Detects both two-finger pinch (thumb+index) and three-finger pinch
-    // (thumb+index+middle). Uses the minimum distance between fingertip pairs.
+    // Detects two-finger (thumb+index) or three-finger (thumb+index+middle) pinch.
+    // Requires sustained proximity for PINCH_SUSTAIN_FRAMES to prevent false positives
+    // from transient finger proximity during normal hand movement.
     const pinchResults = hands.map((hand) => {
       const thumb = hand.landmarks[LANDMARK.THUMB_TIP];
       const index = hand.landmarks[LANDMARK.INDEX_TIP];
@@ -74,23 +77,32 @@ export function useGestureDetection() {
 
       const thumbIndexDist = distance(thumb, index);
       const thumbMiddleDist = middle ? distance(thumb, middle) : Infinity;
-
-      // Use the minimum distance — if ANY two of the three tips are close, it's a pinch
       const minDist = Math.min(thumbIndexDist, thumbMiddleDist);
       const key = hand.handedness;
 
       const wasPinching = pinchStateRef.current[key] ?? false;
+      const sustainCount = pinchSustainRef.current[key] ?? 0;
 
       let isPinching: boolean;
       if (wasPinching) {
+        // Already pinching — exit when distance exceeds exit threshold
         isPinching = minDist < GESTURE.PINCH_EXIT_THRESHOLD;
+        if (!isPinching) {
+          pinchSustainRef.current[key] = 0;
+        }
       } else {
-        isPinching = minDist < GESTURE.PINCH_ENTER_THRESHOLD;
+        // Not pinching — require sustained proximity before entering pinch
+        if (minDist < GESTURE.PINCH_ENTER_THRESHOLD) {
+          pinchSustainRef.current[key] = sustainCount + 1;
+          isPinching = sustainCount + 1 >= GRIP.PINCH_SUSTAIN_FRAMES;
+        } else {
+          pinchSustainRef.current[key] = 0;
+          isPinching = false;
+        }
       }
 
       pinchStateRef.current[key] = isPinching;
 
-      // Spread uses thumb-index only (wider gesture)
       const isSpreading = thumbIndexDist > GESTURE.SPREAD_THRESHOLD;
 
       return { isPinching, isSpreading };
