@@ -234,3 +234,12 @@ export const OLLAMA = {
   MAX_CONTEXT_MESSAGES: 100,
   DEBOUNCE_MS: 100,
 } as const;
+
+// --- Tap Gesture ---
+export const TAP = {
+  THRESHOLD: 0.08,
+  RELEASE_THRESHOLD: 0.12,
+  DOUBLE_TAP_WINDOW_MS: 400,
+  RIPPLE_DURATION_MS: 300,
+  RIPPLE_SIZE: 40,
+} as const;
