@@ -5,7 +5,17 @@ import type { Landmark } from '../../types/index';
  * Helper: build a minimal 21-landmark array with zeros, then override specific ones.
  */
 function makeLandmarks(overrides: Partial<Record<number, Landmark>> = {}): Landmark[] {
-  const lm: Landmark[] = Array.from({ length: 21 }, () => ({ x: 0, y: 0, z: 0 }));
+  // Default landmarks with realistic spread so fingertips are NOT close together.
+  // This prevents the pinch proximity check from false-matching in non-pinch tests.
+  const lm: Landmark[] = Array.from({ length: 21 }, (_, i) => ({
+    x: (i % 5) * 0.1,     // spread across X
+    y: Math.floor(i / 5) * 0.1, // spread across Y
+    z: 0,
+  }));
+  // Ensure thumb(4), index(8), middle(12) tips are well separated
+  lm[4] = { x: 0.0, y: 0.2, z: 0 };  // thumb tip
+  lm[8] = { x: 0.3, y: 0.4, z: 0 };  // index tip
+  lm[12] = { x: 0.5, y: 0.5, z: 0 }; // middle tip
   for (const [idx, val] of Object.entries(overrides)) {
     lm[Number(idx)] = val!;
   }
