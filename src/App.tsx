@@ -46,6 +46,8 @@ import {
 import type { GestureMapping } from './agent/types';
 import type { ActionIntent, ActionResult } from './plugins/types';
 import type { SpatialEvent, SpatialTelemetryData } from './types/spatial';
+import { GestureFeedbackPanel } from './components/telemetry/GestureFeedbackPanel';
+import type { GestureFeedbackEntry } from './components/telemetry/GestureFeedbackPanel';
 import { useTapDetection } from './hooks/useTapDetection';
 import TapRipple from './components/TapRipple';
 import type { TapRippleHandle } from './components/TapRipple';
@@ -180,14 +182,37 @@ export default function App() {
     onAction: handleAction,
   });
 
+  const originalHandleRef = useRef(interpreter.handle);
+  originalHandleRef.current = interpreter.handle;
+
+  const handleWithFeedback = useCallback((event: import('./agent/types').AgentGestureEvent) => {
+    // Log the gesture for feedback
+    const spatial = handOverDOM.handSpatialRef.current;
+    const hand = spatial?.right ?? spatial?.left;
+    setGestureFeedbackLog((prev) => {
+      const entry: GestureFeedbackEntry = {
+        id: ++gestureFeedbackIdRef.current,
+        gesture: event.type,
+        timestamp: performance.now(),
+        spatial: hand?.hoverTarget?.selector,
+      };
+      const next = [...prev, entry];
+      return next.length > 15 ? next.slice(-15) : next;
+    });
+    // Still call the original handler
+    originalHandleRef.current(event);
+  }, [handOverDOM]);
+
   // --- Interaction controller (depends on interpreter.handle) ---
   const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake, updateMotion } =
-    useInteractionController({ onGestureEvent: interpreter.handle });
+    useInteractionController({ onGestureEvent: handleWithFeedback });
 
   // --- UI state ---
   const [telemetryVisible, setTelemetryVisible] = useState(true);
   const [fps, setFps] = useState(0);
   const [spatialEventLog, setSpatialEventLog] = useState<SpatialEvent[]>([]);
+  const [gestureFeedbackLog, setGestureFeedbackLog] = useState<GestureFeedbackEntry[]>([]);
+  const gestureFeedbackIdRef = useRef(0);
 
   // --- Refs ---
   const cursorRef = useRef<HTMLDivElement>(null);
@@ -491,12 +516,42 @@ export default function App() {
     };
   }, [edgeWarning]);
 
+  const handleGestureConfirm = useCallback((id: number) => {
+    setGestureFeedbackLog((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, feedback: 'correct' as const } : e))
+    );
+    const entry = gestureFeedbackLog.find((e) => e.id === id);
+    if (entry && bridge.isConnected) {
+      addEntry({
+        type: 'gesture-confirm',
+        timestamp: performance.now(),
+        description: `Confirmed: ${entry.gesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
+        data: { gesture: entry.gesture, spatial: entry.spatial },
+      });
+    }
+  }, [gestureFeedbackLog, bridge, addEntry]);
+
+  const handleGestureCorrect = useCallback((id: number, correctGesture: string) => {
+    setGestureFeedbackLog((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, feedback: 'incorrect' as const, correction: correctGesture } : e))
+    );
+    const entry = gestureFeedbackLog.find((e) => e.id === id);
+    if (entry) {
+      addEntry({
+        type: 'gesture-correction',
+        timestamp: performance.now(),
+        description: `Correction: ${entry.gesture} → ${correctGesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
+        data: { detected: entry.gesture, correct: correctGesture, spatial: entry.spatial },
+      });
+    }
+  }, [gestureFeedbackLog, addEntry]);
+
   // Clap → send to gesture interpreter only (no screenshot)
   useEffect(() => {
     onClapRef.current = () => {
-      interpreter.handle({ type: 'clap', hands: handsRef.current, timestamp: performance.now() });
+      handleWithFeedback({ type: 'clap', hands: handsRef.current, timestamp: performance.now() });
     };
-  }, [onClapRef, interpreter.handle]);
+  }, [onClapRef, handleWithFeedback]);
 
   const primaryGrip = gripData[0];
 
@@ -643,6 +698,14 @@ export default function App() {
               spatialEvents={spatialEventLog}
               ollamaConnected={bridge.isConnected}
               ollamaDebugRef={bridge.debugRef}
+            />
+          </DraggablePanel>
+
+          <DraggablePanel initialX={W - 250} initialY={H - 280} handCursors={panelHandCursors}>
+            <GestureFeedbackPanel
+              entries={gestureFeedbackLog}
+              onConfirm={handleGestureConfirm}
+              onCorrect={handleGestureCorrect}
             />
           </DraggablePanel>
         </>
