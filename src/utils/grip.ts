@@ -50,20 +50,10 @@ export function classifyGrip(
 ): GripType {
   const [thumbCurl, indexCurl, middleCurl, ringCurl, pinkyCurl] = fingerCurl;
 
-  // Fist: every finger tightly curled.
-  if (thumbCurl > GRIP.FIST_THRESHOLD && indexCurl > GRIP.FIST_THRESHOLD && middleCurl > GRIP.FIST_THRESHOLD && ringCurl > GRIP.FIST_THRESHOLD && pinkyCurl > GRIP.FIST_THRESHOLD) {
-    return 'fist';
-  }
-
-  // Open: every finger extended.
-  if (thumbCurl < GRIP.OPEN_THRESHOLD && indexCurl < GRIP.OPEN_THRESHOLD && middleCurl < GRIP.OPEN_THRESHOLD && ringCurl < GRIP.OPEN_THRESHOLD && pinkyCurl < GRIP.OPEN_THRESHOLD) {
-    return 'open';
-  }
-
-  // Pinch: detected by fingertip proximity, not finger curl.
-  // Three-finger pinch (thumb + index + middle tips close) or
-  // two-finger pinch (thumb + index tips close).
-  // This is more robust than curl-based detection for natural hand poses.
+  // Pinch MUST be checked BEFORE open — during a natural pinch, fingers
+  // remain largely extended (curls ~0.05-0.13), which would match "open"
+  // and skip the pinch check entirely.
+  // Detected by fingertip proximity: thumb(4) + index(8) or + middle(12).
   const thumbTip = landmarks[LANDMARK.THUMB_TIP];
   const indexTip = landmarks[LANDMARK.INDEX_TIP];
   const middleTip = landmarks[LANDMARK.MIDDLE_TIP];
@@ -73,17 +63,25 @@ export function classifyGrip(
     const thumbMiddleDist = middleTip ? distance3d(thumbTip, middleTip) : Infinity;
     const indexMiddleDist = middleTip ? distance3d(indexTip, middleTip) : Infinity;
 
-    // Three-finger pinch: all three tips within threshold
     const threeFingerPinch = thumbIndexDist < GRIP.PINCH_TIP_DISTANCE
       && thumbMiddleDist < GRIP.PINCH_TIP_DISTANCE
       && indexMiddleDist < GRIP.PINCH_TIP_DISTANCE;
 
-    // Two-finger pinch: thumb + index close
     const twoFingerPinch = thumbIndexDist < GRIP.PINCH_TIP_DISTANCE;
 
     if (threeFingerPinch || twoFingerPinch) {
       return 'pinch';
     }
+  }
+
+  // Fist: every finger tightly curled.
+  if (thumbCurl > GRIP.FIST_THRESHOLD && indexCurl > GRIP.FIST_THRESHOLD && middleCurl > GRIP.FIST_THRESHOLD && ringCurl > GRIP.FIST_THRESHOLD && pinkyCurl > GRIP.FIST_THRESHOLD) {
+    return 'fist';
+  }
+
+  // Open: every finger extended.
+  if (thumbCurl < GRIP.OPEN_THRESHOLD && indexCurl < GRIP.OPEN_THRESHOLD && middleCurl < GRIP.OPEN_THRESHOLD && ringCurl < GRIP.OPEN_THRESHOLD && pinkyCurl < GRIP.OPEN_THRESHOLD) {
+    return 'open';
   }
 
   // Point: index extended, middle/ring/pinky curled.
