@@ -5,6 +5,19 @@ import { hitTest as aabbHitTest } from '../utils/geometry';
 import { objectsOverlap, resolveCollisions } from '../utils/collision';
 import { OBJECTS, SPATIAL } from '../config';
 
+// --- Momentum / Physics ---
+interface ObjectMomentum {
+  vx: number;
+  vy: number;
+  lastMoveX: number;
+  lastMoveY: number;
+  lastMoveTime: number;
+}
+
+const FRICTION = 0.92;           // velocity multiplier per frame (1 = no friction)
+const MIN_VELOCITY = 0.5;       // px/frame below which momentum stops
+const MOMENTUM_MULTIPLIER = 0.8; // scale release velocity
+
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -59,6 +72,8 @@ export interface ObjectManagementResult {
   addObject: (position: Position) => void;
   removeObject: (id: string) => void;
   moveObject: (id: string, position: Position) => void;
+  releaseObject: (id: string) => void;
+  applyMomentum: () => void;
   hitTest: (cursor: Position) => string | null;
   clearAll: () => void;
 }
@@ -74,6 +89,7 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
   objectsRef.current = objects;
 
   const lastAddTimeRef = useRef<number>(0);
+  const momentumRef = useRef<Map<string, ObjectMomentum>>(new Map());
 
   const addObject = useCallback((position: Position) => {
     const now = Date.now();
@@ -92,6 +108,22 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
   }, []);
 
   const moveObject = useCallback((id: string, position: Position) => {
+    // Track velocity for momentum on release
+    const now = performance.now();
+    const mom = momentumRef.current.get(id);
+    if (mom) {
+      const dt = now - mom.lastMoveTime;
+      if (dt > 0 && dt < 100) { // ignore stale deltas
+        mom.vx = (position.x - mom.lastMoveX) / dt * 16; // normalize to ~60fps frame
+        mom.vy = (position.y - mom.lastMoveY) / dt * 16;
+      }
+      mom.lastMoveX = position.x;
+      mom.lastMoveY = position.y;
+      mom.lastMoveTime = now;
+    } else {
+      momentumRef.current.set(id, { vx: 0, vy: 0, lastMoveX: position.x, lastMoveY: position.y, lastMoveTime: now });
+    }
+
     setObjects((prev) => {
       const updated = prev.map((obj) => {
         if (obj.id !== id) return obj;
@@ -164,6 +196,60 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     });
   }, []);
 
+  // Release an object — capture its velocity for momentum
+  const releaseObject = useCallback((id: string) => {
+    const mom = momentumRef.current.get(id);
+    if (mom) {
+      // Scale velocity for natural feel
+      mom.vx *= MOMENTUM_MULTIPLIER;
+      mom.vy *= MOMENTUM_MULTIPLIER;
+    }
+    // Momentum will be applied by applyMomentum() in the RAF loop
+  }, []);
+
+  // Apply momentum to all released objects (call every frame from RAF loop)
+  const applyMomentum = useCallback(() => {
+    const toRemove: string[] = [];
+
+    for (const [id, mom] of momentumRef.current) {
+      const speed = Math.sqrt(mom.vx * mom.vx + mom.vy * mom.vy);
+      if (speed < MIN_VELOCITY) {
+        toRemove.push(id);
+        continue;
+      }
+
+      // Apply friction
+      mom.vx *= FRICTION;
+      mom.vy *= FRICTION;
+
+      // Move the object
+      const objs = objectsRef.current;
+      const obj = objs.find((o) => o.id === id);
+      if (!obj) {
+        toRemove.push(id);
+        continue;
+      }
+
+      // Don't apply momentum to grabbed objects
+      // (momentum entry is cleared on next grab via moveObject)
+      const newX = Math.max(0, Math.min(obj.x + mom.vx, window.innerWidth - obj.width));
+      const newY = Math.max(0, Math.min(obj.y + mom.vy, window.innerHeight - obj.height));
+
+      // Bounce off edges
+      if (newX <= 0 || newX >= window.innerWidth - obj.width) mom.vx *= -0.5;
+      if (newY <= 0 || newY >= window.innerHeight - obj.height) mom.vy *= -0.5;
+
+      setObjects((prev) => {
+        const updated = prev.map((o) => o.id === id ? { ...o, x: newX, y: newY } : o);
+        return resolveCollisions(updated, id, window.innerWidth, window.innerHeight);
+      });
+    }
+
+    for (const id of toRemove) {
+      momentumRef.current.delete(id);
+    }
+  }, []);
+
   // Reads from objectsRef so the callback is stable (never needs to be recreated)
   const hitTest = useCallback(
     (cursor: Position): string | null => {
@@ -184,5 +270,5 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     setObjects([]);
   }, []);
 
-  return { objects, addObject, removeObject, moveObject, hitTest, clearAll };
+  return { objects, addObject, removeObject, moveObject, releaseObject, applyMomentum, hitTest, clearAll };
 }

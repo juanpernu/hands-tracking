@@ -116,7 +116,7 @@ export default function App() {
   const { hands, isReady, error, videoRef } = useHandTracking();
   const detectGesture = useGestureDetection();
   const { positionRef: mousePosRef, isGrabbing: mouseGrabbing, containerRef } = useMouseFallback();
-  const { objects, addObject, removeObject, moveObject, hitTest } = useObjectManagement(0);
+  const { objects, addObject, removeObject, moveObject, releaseObject, applyMomentum, hitTest } = useObjectManagement(0);
 
   // --- Analysis hooks ---
   const { physicsData, gripData, motionData, gripRef, computeFrame } = useHandAnalysis();
@@ -269,6 +269,8 @@ export default function App() {
   const mouseGrabbingRef = useRef(mouseGrabbing);
   mouseGrabbingRef.current = mouseGrabbing;
   const grabbedIdRef = useRef(grabbedId);
+  const prevGrabbedIdRef = useRef<string | null>(null);
+  const prevGrabbedIdLeftRef = useRef<string | null>(null);
   grabbedIdRef.current = grabbedId;
   const grabbedIdLeftRef = useRef(grabbedIdLeft);
   grabbedIdLeftRef.current = grabbedIdLeft;
@@ -349,6 +351,19 @@ export default function App() {
         H: currentH,
       },
     );
+
+    // 5.3.5 Detect grab release → trigger momentum
+    if (prevGrabbedIdRef.current && !currentGrabbedRight) {
+      releaseObject(prevGrabbedIdRef.current);
+    }
+    if (prevGrabbedIdLeftRef.current && !currentGrabbedLeft) {
+      releaseObject(prevGrabbedIdLeftRef.current);
+    }
+    prevGrabbedIdRef.current = currentGrabbedRight;
+    prevGrabbedIdLeftRef.current = currentGrabbedLeft;
+
+    // Apply momentum to released objects
+    applyMomentum();
 
     // 5.4 Depth tracking
     updateDepth(currentHands);
@@ -520,6 +535,8 @@ export default function App() {
     addObject,
     removeObject,
     moveObject,
+    releaseObject,
+    applyMomentum,
     mousePosRef,
     spatialIndex,
     handOverDOM,
