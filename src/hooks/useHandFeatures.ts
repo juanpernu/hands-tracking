@@ -44,28 +44,12 @@ export function useHandFeatures(): (hands: HandData[], timestamp: number) => Han
       const thumbOpposition = extractThumbOpposition(landmarks, handSize);
 
       // 6. Finger curl ratios (5 values)
-      const fingerCurlRatios: [number, number, number, number, number] = [
+      const fingerCurlRatios = FINGER_CHAINS.map(chain =>
         computeFingerCurlRatio(
-          landmarks[FINGER_CHAINS[0][0]], landmarks[FINGER_CHAINS[0][1]],
-          landmarks[FINGER_CHAINS[0][2]], landmarks[FINGER_CHAINS[0][3]],
-        ),
-        computeFingerCurlRatio(
-          landmarks[FINGER_CHAINS[1][0]], landmarks[FINGER_CHAINS[1][1]],
-          landmarks[FINGER_CHAINS[1][2]], landmarks[FINGER_CHAINS[1][3]],
-        ),
-        computeFingerCurlRatio(
-          landmarks[FINGER_CHAINS[2][0]], landmarks[FINGER_CHAINS[2][1]],
-          landmarks[FINGER_CHAINS[2][2]], landmarks[FINGER_CHAINS[2][3]],
-        ),
-        computeFingerCurlRatio(
-          landmarks[FINGER_CHAINS[3][0]], landmarks[FINGER_CHAINS[3][1]],
-          landmarks[FINGER_CHAINS[3][2]], landmarks[FINGER_CHAINS[3][3]],
-        ),
-        computeFingerCurlRatio(
-          landmarks[FINGER_CHAINS[4][0]], landmarks[FINGER_CHAINS[4][1]],
-          landmarks[FINGER_CHAINS[4][2]], landmarks[FINGER_CHAINS[4][3]],
-        ),
-      ];
+          landmarks[chain[0]], landmarks[chain[1]],
+          landmarks[chain[2]], landmarks[chain[3]],
+        )
+      ) as [number, number, number, number, number];
 
       // 7. Hand openness
       const handOpenness = computeHandOpenness(landmarks, handSize);
