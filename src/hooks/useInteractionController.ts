@@ -386,12 +386,15 @@ export function useInteractionController(config?: InteractionControllerConfig) {
     now: number,
   ) => {
     if (
-      hands.length >= 1 &&
-      physicsData.length > 0 &&
+      hands.length >= 2 &&
+      physicsData.length >= 2 &&
       now - shakeHistoryRef.current.lastClearTime > INTERACTION.SHAKE_CLEAR_DEBOUNCE_MS
     ) {
-      const maxSpeed = Math.max(...physicsData.map((p) => magnitude3(p.palmVelocity)));
-      if (maxSpeed > INTERACTION.SHAKE_CLEAR_VELOCITY) {
+      // Require BOTH hands moving fast to avoid false positives from grip cycling
+      const speeds = physicsData.map((p) => magnitude3(p.palmVelocity));
+      const minSpeed = Math.min(...speeds);
+      const maxSpeed = Math.max(...speeds);
+      if (minSpeed > INTERACTION.SHAKE_CLEAR_VELOCITY * 0.5 && maxSpeed > INTERACTION.SHAKE_CLEAR_VELOCITY) {
         const fastestHand = physicsData.reduce((a, b) =>
           magnitude3(a.palmVelocity) > magnitude3(b.palmVelocity) ? a : b,
         );
