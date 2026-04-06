@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { HandFeatureVector, JointAngles } from '../../types/features';
+import type { HandFeatureVector, JointAngles, GesturePhase } from '../../types/features';
 import { PANEL } from '../../config';
 
 interface FeatureHUDProps {
@@ -10,7 +10,7 @@ const FINGER_LABELS = ['T', 'I', 'M', 'R', 'P'] as const;
 const JOINT_LABELS = ['MCP', 'PIP', 'DIP'] as const;
 const FINGER_KEYS: (keyof JointAngles)[] = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 
-const PHASE_COLORS: Record<string, string> = {
+const PHASE_COLORS: Record<GesturePhase, string> = {
   idle: '#666',
   preparation: '#FFBD2E',
   stroke: '#27C93F',
@@ -58,7 +58,8 @@ function HandFeaturePanel({ feature, label }: { feature: HandFeatureVector | und
             <div key={fKey} style={{ display: 'contents' }}>
               <div style={fingerLabelCell}>{FINGER_LABELS[fi]}</div>
               {(['mcp', 'pip', 'dip'] as const).map((jKey) => {
-                const val = angles[jKey];
+                const raw = angles?.[jKey];
+                const val = (typeof raw === 'number' && isFinite(raw)) ? raw : 0;
                 const pct = Math.min(val / Math.PI, 1);
                 return (
                   <div key={jKey} style={barCell}>
@@ -101,7 +102,7 @@ function HandFeaturePanel({ feature, label }: { feature: HandFeatureVector | und
       {/* Hand openness */}
       <div style={{ ...rowStyle, marginTop: 4 }}>
         <span style={{ opacity: 0.6 }}>OPENNESS</span>
-        <span>{Math.round(handOpenness * 100)}%</span>
+        <span>{Math.round(Math.min(handOpenness, 1) * 100)}%</span>
       </div>
       <div style={opennessBarContainer}>
         <div style={{
@@ -113,16 +114,21 @@ function HandFeaturePanel({ feature, label }: { feature: HandFeatureVector | und
       {/* Finger curl ratios */}
       <div style={sectionHeader}>FINGER CURL</div>
       <div style={curlBarContainer}>
-        {FINGER_LABELS.map((finger, i) => (
+        {FINGER_LABELS.map((finger, i) => {
+          const curl = (typeof fingerCurlRatios[i] === 'number' && isFinite(fingerCurlRatios[i]))
+            ? Math.max(0, Math.min(1, fingerCurlRatios[i]))
+            : 0;
+          return (
           <div key={finger} style={{ textAlign: 'center' }}>
             <div style={{
               ...curlBar,
-              height: `${fingerCurlRatios[i] * 24}px`,
-              backgroundColor: fingerCurlRatios[i] > 0.7 ? '#FF5F56' : fingerCurlRatios[i] > 0.4 ? '#FFBD2E' : '#27C93F',
+              height: `${curl * 24}px`,
+              backgroundColor: curl > 0.7 ? '#FF5F56' : curl > 0.4 ? '#FFBD2E' : '#27C93F',
             }} />
             <div style={{ fontSize: 8, opacity: 0.5 }}>{finger}</div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

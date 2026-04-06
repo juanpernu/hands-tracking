@@ -251,7 +251,7 @@ export default function App() {
     // 1b. Push features into temporal buffer and run temporal gesture detection
     temporalFeatures.push(features);
     temporalDetector.updateMotion(motions);
-    temporalDetector.detect();
+    temporalDetector.detect(currentHands);
 
     // 2. Build spatial telemetry data from hand-over-DOM state
     const spatialMap = new Map<string, SpatialTelemetryData>();
@@ -681,8 +681,10 @@ export default function App() {
             />
           </DraggablePanel>
 
-          <DraggablePanel initialX={20} initialY={380} handCursors={panelHandCursors}>
-            <FeatureHUD featuresData={featuresData} />
+          <DraggablePanel initialX={20} initialY={Math.min(H - 340, 400)} handCursors={panelHandCursors}>
+            <ErrorBoundary inline fallbackLabel="Feature HUD error">
+              <FeatureHUD featuresData={featuresData} />
+            </ErrorBoundary>
           </DraggablePanel>
 
           <DraggablePanel initialX={20} initialY={H - 280} handCursors={panelHandCursors}>

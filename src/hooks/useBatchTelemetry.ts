@@ -59,7 +59,7 @@ interface PendingBatch {
 
 const MAX_RETRIES = 3;
 const MAX_RETRY_QUEUE = 10;
-const BEACON_CHUNK_SIZE = 15; // ~15 frames * ~3KB = ~45KB, well under sendBeacon's 64KB limit
+const BEACON_CHUNK_SIZE = 8; // ~8 frames * ~6KB (with features) = ~48KB, under sendBeacon's 64KB limit
 const DEFAULT_MAX_FRAMES = 500;
 const DEFAULT_MAX_INTERVAL_MS = 10_000;
 
@@ -261,12 +261,14 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
         for (let i = 0; i < buf.frames.length; i += BEACON_CHUNK_SIZE) {
           sequenceRef.current++;
           const chunk = buf.frames.slice(i, i + BEACON_CHUNK_SIZE);
+          // Strip features to stay under sendBeacon's 64KB limit
+          const slimFrames = chunk.map(f => ({ ...f, features: undefined }));
           const payload = new Blob([JSON.stringify({
             sessionId: sid,
             sequenceNum: sequenceRef.current,
             startTime: Math.round(chunk[0].timestamp + offset),
             endTime: Math.round(chunk[chunk.length - 1].timestamp + offset),
-            frames: chunk,
+            frames: slimFrames,
             events: i === 0 ? buf.events : [],
           })], { type: 'application/json' });
           navigator.sendBeacon('/api/telemetry/batch', payload);
