@@ -81,38 +81,45 @@ export function useTapDetection(): UseTapDetectionReturn {
         stateMap.current.set(key, s);
       }
 
-      // Calibrate baseline extension over first 30 frames
+      // Calibrate baseline over first 30 frames
       if (s.calibrationFrames < 30) {
         s.calibrationSum += fingerExtension;
         s.calibrationFrames++;
         s.baselineExtension = s.calibrationSum / s.calibrationFrames;
         s.prevExtension = fingerExtension;
-        const debugKey = key === 'Left' ? 'left' : 'right';
-        debugRef.current[debugKey] = { fingerExtension, velocity: 0, state: 'idle' };
+        const dk = key === 'Left' ? 'left' : 'right';
+        debugRef.current[dk] = { fingerExtension, velocity: 0, state: 'idle' };
         continue;
       }
 
-      // Velocity = rate of change (negative = finger flexing/dipping)
+      // Slowly adapt baseline when idle (EMA with very low alpha)
+      if (s.state === 'idle') {
+        s.baselineExtension = s.baselineExtension * 0.98 + fingerExtension * 0.02;
+      }
+
+      // Velocity = rate of change
       const rawVelocity = fingerExtension - s.prevExtension;
-      s.smoothVelocity = s.smoothVelocity * 0.5 + rawVelocity * 0.5; // EMA
+      s.smoothVelocity = s.smoothVelocity * 0.5 + rawVelocity * 0.5;
       s.prevExtension = fingerExtension;
 
-      // How far the finger has dipped from baseline
-      const dipFromBaseline = s.baselineExtension - fingerExtension;
+      // Dip from baseline (absolute — works regardless of hand orientation)
+      const dipFromBaseline = Math.abs(s.baselineExtension - fingerExtension);
+      // Velocity magnitude (we care about speed of change, not direction)
+      const velocityMag = Math.abs(s.smoothVelocity);
 
       const debugKey = key === 'Left' ? 'left' : 'right';
       debugRef.current[debugKey] = { fingerExtension, velocity: s.smoothVelocity, state: s.state };
 
       switch (s.state) {
         case 'idle':
-          // Detect downward dip — finger flexing toward palm
-          if (dipFromBaseline > TAP.THRESHOLD && s.smoothVelocity < -TAP.VELOCITY_THRESHOLD) {
+          // Detect finger flexion — significant deviation from baseline + fast movement
+          if (dipFromBaseline > TAP.THRESHOLD && velocityMag > TAP.VELOCITY_THRESHOLD) {
             s.state = 'tap-down';
           }
           break;
 
         case 'tap-down':
-          // Detect return — finger extending back
+          // Detect return to baseline
           if (dipFromBaseline < TAP.RELEASE_THRESHOLD) {
             s.state = 'first-tap';
             s.firstTapTime = timestamp;
@@ -122,7 +129,7 @@ export function useTapDetection(): UseTapDetectionReturn {
         case 'first-tap':
           if (timestamp - s.firstTapTime > TAP.DOUBLE_TAP_WINDOW_MS) {
             s.state = 'idle';
-          } else if (dipFromBaseline > TAP.THRESHOLD && s.smoothVelocity < -TAP.VELOCITY_THRESHOLD) {
+          } else if (dipFromBaseline > TAP.THRESHOLD && velocityMag > TAP.VELOCITY_THRESHOLD) {
             s.state = 'double-tap-down';
           }
           break;
