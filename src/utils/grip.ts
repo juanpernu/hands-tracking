@@ -104,13 +104,26 @@ export function classifyGripAdvanced(
 
   // --- New types (checked first for specificity) ---
 
-  // OK sign: thumb-index tips close, other fingers extended
-  if (thumbOpposition[0] < 0.3 && middleCurl < 0.3 && ringCurl < 0.3 && pinkyCurl < 0.3) {
+  // OK sign: thumb bent toward index (forming O), index extended, other 3 extended
+  if (
+    thumbOpposition[0] < 0.3 &&
+    thumbCurl > 0.2 &&        // thumb must be bent, not fully extended
+    indexCurl < 0.35 &&        // index extended (forms the O ring)
+    middleCurl < 0.3 &&
+    ringCurl < 0.3 &&
+    pinkyCurl < 0.3
+  ) {
     return 'ok';
   }
 
-  // Peace/Victory: index + middle extended, ring + pinky curled
-  if (indexCurl < 0.3 && middleCurl < 0.3 && ringCurl > 0.6 && pinkyCurl > 0.6) {
+  // Peace: index + middle extended, ring + pinky curled, thumb NOT fully extended
+  if (
+    thumbCurl > 0.25 &&
+    indexCurl < 0.3 &&
+    middleCurl < 0.3 &&
+    ringCurl > 0.6 &&
+    pinkyCurl > 0.6
+  ) {
     return 'peace';
   }
 
@@ -123,8 +136,7 @@ export function classifyGripAdvanced(
   if (thumbCurl < 0.3 && indexCurl > 0.6 && middleCurl > 0.6 && ringCurl > 0.6 && pinkyCurl > 0.6) {
     if (palmOrientation.pitch > 0.3) return 'thumbs-up';
     if (palmOrientation.pitch < -0.3) return 'thumbs-down';
-    // Ambiguous pitch — default to thumbs-up
-    return 'thumbs-up';
+    return 'partial';  // dead zone — don't commit
   }
 
   // --- Fall through to existing classification ---

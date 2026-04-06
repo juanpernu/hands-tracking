@@ -137,6 +137,8 @@ interface FrameCache {
   velocities: Vec3[];
   /** Wrist acceleration from the previous frame (for jerk computation). */
   wristAcceleration: Vec3;
+  /** Whether wristAcceleration was computed from real data (not seeded zeros). */
+  hasRealAcceleration: boolean;
 }
 
 // ─── hook ─────────────────────────────────────────────────────────────────────
@@ -166,6 +168,7 @@ export function useHandPhysics(): (hands: HandData[], timestamp: number) => Hand
             timestamp,
             velocities: landmarks.map(() => zeroVec3()),
             wristAcceleration: zeroVec3(),
+            hasRealAcceleration: false,
           };
 
           result.push(buildZeroPhysics(handedness, timestamp, 0));
@@ -225,13 +228,18 @@ export function useHandPhysics(): (hands: HandData[], timestamp: number) => Hand
           prev.velocities[0] ?? zeroVec3(),
           deltaSeconds,
         );
-        const prevWristAcceleration = prev.wristAcceleration;
-        const accelDelta = sub3(wristAcceleration, prevWristAcceleration);
-        const wristJerk: Vec3 = {
-          x: clampComponent(accelDelta.x / deltaSeconds, -10000, 10000),
-          y: clampComponent(accelDelta.y / deltaSeconds, -10000, 10000),
-          z: clampComponent(accelDelta.z / deltaSeconds, -10000, 10000),
-        };
+        // Only compute jerk when previous acceleration was real (not seeded zeros)
+        // to avoid a phantom spike on the first real frame.
+        const wristJerk: Vec3 = prev.hasRealAcceleration
+          ? (() => {
+              const accelDelta = sub3(wristAcceleration, prev.wristAcceleration);
+              return {
+                x: clampComponent(accelDelta.x / deltaSeconds, -10000, 10000),
+                y: clampComponent(accelDelta.y / deltaSeconds, -10000, 10000),
+                z: clampComponent(accelDelta.z / deltaSeconds, -10000, 10000),
+              };
+            })()
+          : zeroVec3();
 
         // ── Update cache with smoothed velocities for next frame ─────────────
         frameCache.current[handedness] = {
@@ -239,6 +247,7 @@ export function useHandPhysics(): (hands: HandData[], timestamp: number) => Hand
           timestamp,
           velocities: smoothedVelocities,
           wristAcceleration,
+          hasRealAcceleration: true,
         };
 
         result.push({

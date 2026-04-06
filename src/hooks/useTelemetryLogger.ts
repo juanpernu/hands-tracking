@@ -123,9 +123,7 @@ export function useTelemetryLogger(): TelemetryLoggerResult {
         if (leftP && rightP) {
           const leftSpeed = magnitude3(leftP.palmVelocity);
           const rightSpeed = magnitude3(rightP.palmVelocity);
-          const converging =
-            (leftP.palmVelocity.x > 0 && rightP.palmVelocity.x < 0) ||
-            (leftP.palmVelocity.x < 0 && rightP.palmVelocity.x > 0);
+          const converging = leftP.palmVelocity.x > 0 && rightP.palmVelocity.x < 0;
           const bothFast = leftSpeed > TELEMETRY_LOGGER.CLAP_MIN_VELOCITY && rightSpeed > TELEMETRY_LOGGER.CLAP_MIN_VELOCITY;
 
           // Check palm orientation — palms should be roughly facing each other for a clap

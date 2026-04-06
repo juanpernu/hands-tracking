@@ -79,8 +79,8 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
   // ─── Pattern detectors ─────────────────────────────────────────────────────
 
   function detectSwipe(timestamp: number, currentPhase: GesturePhase): MotionPattern | null {
-    // Only detect swipe during active gesture phases (stroke or preparation→stroke transition)
-    if (currentPhase === 'idle' || currentPhase === 'retraction') return null;
+    // Only block swipe during retraction — allow idle so fast flicks aren't missed
+    if (currentPhase === 'retraction') return null;
 
     const SPEED_THRESHOLD = MOTION.SWIPE_SPEED_THRESHOLD;
     const MIN_FRAMES = MOTION.SWIPE_MIN_FRAMES;
@@ -286,8 +286,8 @@ export function useMotionRecognition(): (physics: HandPhysics, timestamp: number
 
     if (speed < FEATURES.PHASE_IDLE_THRESHOLD) return 'idle';
     if (acceleration > FEATURES.PHASE_PREPARATION_ACCEL_THRESHOLD) return 'preparation';
+    if (speed > FEATURES.PHASE_RETRACTION_SPEED_THRESHOLD && acceleration >= FEATURES.PHASE_STROKE_DECEL_THRESHOLD) return 'stroke';
     if (acceleration < FEATURES.PHASE_STROKE_DECEL_THRESHOLD) return 'retraction';
-    if (speed > FEATURES.PHASE_RETRACTION_SPEED_THRESHOLD) return 'stroke';
     return 'idle';
   }
 

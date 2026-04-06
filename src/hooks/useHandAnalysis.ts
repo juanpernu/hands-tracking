@@ -42,7 +42,8 @@ export interface UseHandAnalysisReturn {
 export function useHandAnalysis(): UseHandAnalysisReturn {
   const computePhysics = useHandPhysics();
   const detectGrip = useGripDetection();
-  const classifyMotion = useMotionRecognition();
+  const classifyMotionLeft = useMotionRecognition();
+  const classifyMotionRight = useMotionRecognition();
   const computeFeatures = useHandFeatures();
 
   // Refs hold the latest raw data — updated every frame, never cause re-renders
@@ -62,15 +63,27 @@ export function useHandAnalysis(): UseHandAnalysisReturn {
 
   const computeFrame = useCallback(
     (hands: HandData[], timestamp: number): HandAnalysisData => {
-      const physics = computePhysics(hands, timestamp);
-      const grips = detectGrip(hands, timestamp);
-      const motions = physics.map((p) => classifyMotion(p, timestamp));
-
-      // Compute features and enrich with gesture phase from motions
+      // 1. Features first (no dependencies)
       const rawFeatures = computeFeatures(hands, timestamp);
-      const features = rawFeatures.map((f, i) => ({
+
+      // 2. Grips depend on features (pass pre-computed to avoid duplicate extraction)
+      const grips = detectGrip(hands, timestamp, rawFeatures);
+
+      // 3. Motions depend on physics; use per-hand recognizers to avoid cross-contamination
+      const physics = computePhysics(hands, timestamp);
+      const motions = physics.map((p) =>
+        p.handedness === 'Left'
+          ? classifyMotionLeft(p, timestamp)
+          : classifyMotionRight(p, timestamp),
+      );
+
+      // 4. Enrich features with gesture phase, aligned by handedness (not index)
+      const motionByHand = new Map(
+        motions.map((m, i) => [physics[i].handedness, m]),
+      );
+      const features = rawFeatures.map((f) => ({
         ...f,
-        gesturePhase: motions[i]?.gesturePhase ?? f.gesturePhase,
+        gesturePhase: motionByHand.get(f.handedness)?.gesturePhase ?? f.gesturePhase,
       }));
 
       // Always write to refs (every frame, no re-render)
@@ -90,7 +103,7 @@ export function useHandAnalysis(): UseHandAnalysisReturn {
 
       return { physicsData: physics, gripData: grips, motionData: motions, featuresData: features };
     },
-    [computePhysics, detectGrip, classifyMotion, computeFeatures],
+    [computePhysics, detectGrip, classifyMotionLeft, classifyMotionRight, computeFeatures],
   );
 
   return {

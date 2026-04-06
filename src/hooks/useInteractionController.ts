@@ -89,7 +89,7 @@ export function useInteractionController(config?: InteractionControllerConfig) {
   const lastSwipeEmitTimeRef = useRef(0);
 
   // --- Grip type change detection (for new grip gesture events) ---
-  const prevGripTypeRef = useRef<GripType>('open');
+  const prevGripTypeRef = useRef<Record<string, GripType>>({ Left: 'open', Right: 'open' });
 
   // --- Gesture event callback ---
   const onGestureEventRef = useRef(config?.onGestureEvent);
@@ -182,16 +182,13 @@ export function useInteractionController(config?: InteractionControllerConfig) {
       'call-me': 'grip-call-me',
     };
 
-    // Use primary hand (right preferred) for grip change detection
-    const primaryGrip = rightGrip ?? leftGrip;
-    if (primaryGrip) {
-      const currentGripType = primaryGrip.gripType;
-      if (currentGripType !== prevGripTypeRef.current) {
-        const agentGesture = gripTypeToAgentGesture[currentGripType];
-        if (agentGesture) {
-          emitGesture(agentGesture, hands);
-        }
-        prevGripTypeRef.current = currentGripType;
+    // Track per-hand grip changes
+    for (const grip of gripData) {
+      const prevType = prevGripTypeRef.current[grip.handedness] ?? 'open';
+      if (grip.gripType !== prevType) {
+        const agentType = gripTypeToAgentGesture[grip.gripType as keyof typeof gripTypeToAgentGesture];
+        if (agentType) emitGesture(agentType, hands);
+        prevGripTypeRef.current[grip.handedness] = grip.gripType;
       }
     }
 
@@ -423,8 +420,10 @@ export function useInteractionController(config?: InteractionControllerConfig) {
 
       // Only count reversals during active phases
       if (gesturePhase === 'idle') {
-        // Reset history when hand is at rest
-        shakeHistoryRef.current.directions = [];
+        // Decay instead of clear — one idle frame shouldn't destroy accumulated evidence
+        if (shakeHistoryRef.current.directions.length > 0) {
+          shakeHistoryRef.current.directions.pop();
+        }
         return; // early exit — don't process shake during idle
       }
 
@@ -447,7 +446,7 @@ export function useInteractionController(config?: InteractionControllerConfig) {
 
         // Use jerk as additional confirmation — shakes produce high jerk due to rapid direction changes
         const jerkMag = fastestHand.wristJerk ? magnitude3(fastestHand.wristJerk) : 0;
-        const hasHighJerk = jerkMag > 0.5;
+        const hasHighJerk = jerkMag > INTERACTION.SHAKE_JERK_THRESHOLD;
 
         if (reversals >= INTERACTION.SHAKE_CLEAR_REVERSALS && hasHighJerk && objects.length > 0 && !shakeClearingRef.current) {
           emitGesture('shake', hands);

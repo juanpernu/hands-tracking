@@ -169,7 +169,7 @@ describe('classifyGripAdvanced', () => {
   });
 
   it('returns "ok" when thumb-index opposition is close and other fingers extended', () => {
-    const curls: [number, number, number, number, number] = [0.5, 0.5, 0.2, 0.2, 0.2];
+    const curls: [number, number, number, number, number] = [0.5, 0.3, 0.2, 0.2, 0.2];
     const thumbOpp: [number, number, number, number] = [0.2, 0.8, 0.8, 0.8];
     const landmarks = makeLandmarks();
     expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation())).toBe('ok');
@@ -203,11 +203,11 @@ describe('classifyGripAdvanced', () => {
     expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation(-0.5))).toBe('thumbs-down');
   });
 
-  it('defaults to "thumbs-up" when pitch is ambiguous (near zero)', () => {
+  it('returns "partial" when pitch is ambiguous (in dead zone)', () => {
     const curls: [number, number, number, number, number] = [0.2, 0.8, 0.8, 0.8, 0.8];
     const thumbOpp: [number, number, number, number] = [0.8, 0.8, 0.8, 0.8];
     const landmarks = makeLandmarks();
-    expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation(0.1))).toBe('thumbs-up');
+    expect(classifyGripAdvanced(curls, landmarks, makeJointAngles(), thumbOpp, makePalmOrientation(0.1))).toBe('partial');
   });
 
   it('falls through to basic classifyGrip for non-advanced poses', () => {
