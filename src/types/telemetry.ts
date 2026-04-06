@@ -1,5 +1,6 @@
 import type { Landmark } from './index';
 import type { SpatialTelemetryData } from './spatial';
+import type { GesturePhase } from './features';
 
 // Primitives
 export interface Vec3 {
@@ -23,6 +24,7 @@ export interface HandPhysics {
   wristVelocity: Vec3;
   palmVelocity: Vec3;
   angularVelocity: number;
+  wristJerk: Vec3;
   dominantAxis: 'horizontal' | 'vertical' | 'depth' | 'none';
   timestamp: number;
   deltaMs: number;
