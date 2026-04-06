@@ -3,7 +3,8 @@ import { useCallback, useRef } from 'react';
 import type { GripState, GripType } from '../types/telemetry';
 import type { HandData } from '../types/index';
 import { clamp } from '../utils/geometry';
-import { computeFingerCurl, classifyGrip } from '../utils/grip';
+import { computeFingerCurl, classifyGripAdvanced } from '../utils/grip';
+import { extractJointAngles, extractThumbOpposition, extractPalmOrientation, computeHandSize } from '../utils/hand-features';
 import { GRIP, FINGER_CHAINS } from '../config';
 
 // Per-hand mutable state that lives outside React renders.
@@ -85,7 +86,12 @@ export function useGripDetection(): (hands: HandData[], timestamp: number) => Gr
       hs.prevTimestamp = timestamp;
 
       // --- 4 & 5. Grip type classification with hysteresis ---
-      const rawType = classifyGrip(fingerCurl, landmarks);
+      const jointAngles = extractJointAngles(landmarks);
+      const handSize = computeHandSize(landmarks);
+      const thumbOpp = extractThumbOpposition(landmarks, handSize);
+      const palmOri = extractPalmOrientation(landmarks);
+
+      const rawType = classifyGripAdvanced(fingerCurl, landmarks, jointAngles, thumbOpp, palmOri);
 
       if (rawType === hs.candidateType) {
         hs.candidateCount += 1;

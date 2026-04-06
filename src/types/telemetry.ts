@@ -31,7 +31,7 @@ export interface HandPhysics {
 }
 
 // Grip detection
-export type GripType = 'open' | 'fist' | 'pinch' | 'point' | 'partial';
+export type GripType = 'open' | 'fist' | 'pinch' | 'point' | 'partial' | 'ok' | 'thumbs-up' | 'thumbs-down' | 'peace' | 'call-me';
 
 export interface GripState {
   handedness: 'Left' | 'Right';

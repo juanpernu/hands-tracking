@@ -13,9 +13,10 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import type { GestureResult } from './useGestureDetection';
 import type { HandData, GestureState, DraggableObjectData } from '../types';
-import type { GripState } from '../types/telemetry';
+import type { GripState, GripType } from '../types/telemetry';
 import type { MotionPattern } from '../types/telemetry';
 import type { AgentGestureEvent, AgentGestureType } from '../agent/types';
+import type { GesturePhase } from '../types/features';
 import { normalizedToPixel, magnitude3 } from '../utils/geometry';
 import { INTERACTION } from '../config';
 
@@ -86,6 +87,9 @@ export function useInteractionController(config?: InteractionControllerConfig) {
   // --- Swipe detection (rising-edge + debounce) ---
   const prevSwipeActiveRef = useRef(false);
   const lastSwipeEmitTimeRef = useRef(0);
+
+  // --- Grip type change detection (for new grip gesture events) ---
+  const prevGripTypeRef = useRef<GripType>('open');
 
   // --- Gesture event callback ---
   const onGestureEventRef = useRef(config?.onGestureEvent);
@@ -167,6 +171,28 @@ export function useInteractionController(config?: InteractionControllerConfig) {
       partialLowGrabRightRef.current = partialLowGrabRightRef.current ? open < INTERACTION.PARTIAL_GRAB_EXIT : open < INTERACTION.PARTIAL_GRAB_ENTER;
     } else {
       partialLowGrabRightRef.current = false;
+    }
+
+    // --- Grip type change detection (emit events for new grip types) ---
+    const gripTypeToAgentGesture: Partial<Record<GripType, AgentGestureType>> = {
+      'ok': 'grip-ok',
+      'thumbs-up': 'grip-thumbs-up',
+      'thumbs-down': 'grip-thumbs-down',
+      'peace': 'grip-peace',
+      'call-me': 'grip-call-me',
+    };
+
+    // Use primary hand (right preferred) for grip change detection
+    const primaryGrip = rightGrip ?? leftGrip;
+    if (primaryGrip) {
+      const currentGripType = primaryGrip.gripType;
+      if (currentGripType !== prevGripTypeRef.current) {
+        const agentGesture = gripTypeToAgentGesture[currentGripType];
+        if (agentGesture) {
+          emitGesture(agentGesture, hands);
+        }
+        prevGripTypeRef.current = currentGripType;
+      }
     }
 
     // --- Edge detection ---
@@ -380,7 +406,8 @@ export function useInteractionController(config?: InteractionControllerConfig) {
    */
   const updateShake = useCallback((
     hands: HandData[],
-    physicsData: { palmVelocity: { x: number; y: number; z: number } }[],
+    physicsData: { palmVelocity: { x: number; y: number; z: number }; wristJerk?: { x: number; y: number; z: number } }[],
+    motionData: MotionPattern[],
     objects: DraggableObjectData[],
     removeObject: (id: string) => void,
     now: number,
@@ -390,6 +417,17 @@ export function useInteractionController(config?: InteractionControllerConfig) {
       physicsData.length > 0 &&
       now - shakeHistoryRef.current.lastClearTime > INTERACTION.SHAKE_CLEAR_DEBOUNCE_MS
     ) {
+      // Use gesture phase from motion data to filter idle state
+      const primaryMotion = motionData[0];
+      const gesturePhase: GesturePhase = primaryMotion?.gesturePhase ?? 'idle';
+
+      // Only count reversals during active phases
+      if (gesturePhase === 'idle') {
+        // Reset history when hand is at rest
+        shakeHistoryRef.current.directions = [];
+        return; // early exit — don't process shake during idle
+      }
+
       const maxSpeed = Math.max(...physicsData.map((p) => magnitude3(p.palmVelocity)));
       if (maxSpeed > INTERACTION.SHAKE_CLEAR_VELOCITY) {
         const fastestHand = physicsData.reduce((a, b) =>
@@ -407,7 +445,11 @@ export function useInteractionController(config?: InteractionControllerConfig) {
           if (prev * curr < 0 && Math.abs(curr) > 0.3) reversals++;
         }
 
-        if (reversals >= INTERACTION.SHAKE_CLEAR_REVERSALS && objects.length > 0 && !shakeClearingRef.current) {
+        // Use jerk as additional confirmation — shakes produce high jerk due to rapid direction changes
+        const jerkMag = fastestHand.wristJerk ? magnitude3(fastestHand.wristJerk) : 0;
+        const hasHighJerk = jerkMag > 0.5;
+
+        if (reversals >= INTERACTION.SHAKE_CLEAR_REVERSALS && hasHighJerk && objects.length > 0 && !shakeClearingRef.current) {
           emitGesture('shake', hands);
           shakeClearingRef.current = true;
           shakeHistoryRef.current.lastClearTime = now;
