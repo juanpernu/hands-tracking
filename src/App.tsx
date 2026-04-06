@@ -236,7 +236,7 @@ export default function App() {
   const tapRippleRef = useRef<TapRippleHandle>(null);
   const navBarRef = useRef<NavigationBarHandle>(null);
   const navZoneRef = useRef({ enterTime: 0, triggered: false });
-  const scrollDragRef = useRef({ active: false, lastX: 0, lastY: 0 });
+  const scrollDragRef = useRef({ active: false, lastX: 0, lastY: 0, releaseTime: 0 });
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
 
   // --- Tap detection ---
@@ -453,15 +453,15 @@ export default function App() {
     }
 
     // 6.7 Pinch/partial-grip scroll — scroll iframe when gripping with no object grabbed
-    if (navBarRef.current?.hasIframe && gesture) {
-      const isPinching = gesture.isPinching;
-      // Also trigger scroll on partial grip (user closing hand without full pinch)
-      const isPartialGrip = grips.some((g) => g.gripType === 'partial' || g.gripType === 'pinch');
+    if (navBarRef.current?.hasIframe && result) {
+      const isPinching = gesture?.isPinching ?? false;
+      const isPartialGrip = grips.some((g) => g.gripType === 'partial' || g.gripType === 'pinch' || g.gripType === 'fist');
       const scrollTrigger = isPinching || isPartialGrip;
       const noObjectGrabbed = !currentGrabbedRight && !currentGrabbedLeft;
+      const sd = scrollDragRef.current;
 
-      if (scrollTrigger && noObjectGrabbed && result) {
-        const sd = scrollDragRef.current;
+      if (scrollTrigger && noObjectGrabbed) {
+        sd.releaseTime = 0;
         if (!sd.active) {
           sd.active = true;
           sd.lastX = result.cursorPixel.x;
@@ -469,14 +469,24 @@ export default function App() {
         } else {
           const deltaX = sd.lastX - result.cursorPixel.x;
           const deltaY = sd.lastY - result.cursorPixel.y;
-          if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
-            navBarRef.current.scrollBy(deltaX * 2, deltaY * 2);
+          if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+            navBarRef.current.scrollBy(Math.round(deltaX * 3), Math.round(deltaY * 3));
             sd.lastX = result.cursorPixel.x;
             sd.lastY = result.cursorPixel.y;
           }
         }
-      } else {
-        scrollDragRef.current.active = false;
+      } else if (sd.active) {
+        // Debounce release — grip can flicker between open/partial
+        if (sd.releaseTime === 0) {
+          sd.releaseTime = now;
+        } else if (now - sd.releaseTime > 300) {
+          // Only deactivate after 300ms of no grip
+          sd.active = false;
+          sd.releaseTime = 0;
+        }
+        // Keep updating position during debounce to maintain continuity
+        sd.lastX = result.cursorPixel.x;
+        sd.lastY = result.cursorPixel.y;
       }
     }
 
