@@ -24,6 +24,10 @@ const EVENT_COLORS: Record<string, string> = {
   'element-separate': '#BDC3C7',
   'proximity-alert': '#F39C12',
   'drag-snap': '#2ECC71',
+  // Gesture feedback events
+  'gesture-detected': '#4ECDC4',
+  'gesture-confirm': '#2ECC71',
+  'gesture-correction': '#E74C3C',
 };
 
 function formatTime(timestamp: number): string {

@@ -183,22 +183,36 @@ export default function App() {
   originalHandleRef.current = interpreter.handle;
 
   const handleWithFeedback = useCallback((event: import('./agent/types').AgentGestureEvent) => {
-    // Log the gesture for feedback
+    // Log the gesture for feedback UI
     const spatial = handOverDOM.handSpatialRef.current;
     const hand = spatial?.right ?? spatial?.left;
+    const selector = hand?.hoverTarget?.selector;
     setGestureFeedbackLog((prev) => {
       const entry: GestureFeedbackEntry = {
         id: ++gestureFeedbackIdRef.current,
         gesture: event.type,
         timestamp: performance.now(),
-        spatial: hand?.hoverTarget?.selector,
+        spatial: selector,
       };
       const next = [...prev, entry];
       return next.length > 15 ? next.slice(-15) : next;
     });
+    // Persist to telemetry
+    addEntry({
+      type: 'gesture-detected',
+      timestamp: performance.now(),
+      description: `${event.type}${selector ? ` on ${selector}` : ''}`,
+      data: {
+        gesture: event.type,
+        spatial: selector,
+        hands: event.hands.length,
+        physics: event.physics?.[0]?.palmVelocity,
+        grip: event.grip?.[0]?.gripType,
+      },
+    });
     // Still call the original handler
     originalHandleRef.current(event);
-  }, [handOverDOM]);
+  }, [handOverDOM, addEntry]);
 
   // --- Interaction controller (depends on interpreter.handle) ---
   const { gestureState, hoveredId, grabbedId, grabbedIdLeft, edgeWarning, update, updateShake, updateMotion } =
