@@ -196,59 +196,53 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     });
   }, []);
 
-  // Release an object — capture its velocity for momentum
+  // Release an object — start momentum animation
   const releaseObject = useCallback((id: string) => {
     const mom = momentumRef.current.get(id);
-    if (mom) {
-      // Scale velocity for natural feel
-      mom.vx *= MOMENTUM_MULTIPLIER;
-      mom.vy *= MOMENTUM_MULTIPLIER;
-    }
-    // Momentum will be applied by applyMomentum() in the RAF loop
-  }, []);
+    if (!mom) return;
 
-  // Apply momentum to all released objects (call every frame from RAF loop)
-  const applyMomentum = useCallback(() => {
-    const toRemove: string[] = [];
+    let vx = mom.vx * MOMENTUM_MULTIPLIER;
+    let vy = mom.vy * MOMENTUM_MULTIPLIER;
 
-    for (const [id, mom] of momentumRef.current) {
-      const speed = Math.sqrt(mom.vx * mom.vx + mom.vy * mom.vy);
-      if (speed < MIN_VELOCITY) {
-        toRemove.push(id);
-        continue;
-      }
+    // Clear the tracking entry (prevent re-triggering)
+    momentumRef.current.delete(id);
 
-      // Apply friction
-      mom.vx *= FRICTION;
-      mom.vy *= FRICTION;
+    // Skip if velocity is too low
+    if (Math.sqrt(vx * vx + vy * vy) < MIN_VELOCITY) return;
 
-      // Move the object
-      const objs = objectsRef.current;
-      const obj = objs.find((o) => o.id === id);
-      if (!obj) {
-        toRemove.push(id);
-        continue;
-      }
+    // Self-contained RAF animation loop
+    function animate() {
+      const speed = Math.sqrt(vx * vx + vy * vy);
+      if (speed < MIN_VELOCITY) return; // stop animation
 
-      // Don't apply momentum to grabbed objects
-      // (momentum entry is cleared on next grab via moveObject)
-      const newX = Math.max(0, Math.min(obj.x + mom.vx, window.innerWidth - obj.width));
-      const newY = Math.max(0, Math.min(obj.y + mom.vy, window.innerHeight - obj.height));
-
-      // Bounce off edges
-      if (newX <= 0 || newX >= window.innerWidth - obj.width) mom.vx *= -0.5;
-      if (newY <= 0 || newY >= window.innerHeight - obj.height) mom.vy *= -0.5;
+      vx *= FRICTION;
+      vy *= FRICTION;
 
       setObjects((prev) => {
+        const obj = prev.find((o) => o.id === id);
+        if (!obj) return prev;
+
+        let newX = obj.x + vx;
+        let newY = obj.y + vy;
+
+        // Bounce off edges
+        if (newX <= 0) { newX = 0; vx *= -0.5; }
+        if (newX >= window.innerWidth - obj.width) { newX = window.innerWidth - obj.width; vx *= -0.5; }
+        if (newY <= 0) { newY = 0; vy *= -0.5; }
+        if (newY >= window.innerHeight - obj.height) { newY = window.innerHeight - obj.height; vy *= -0.5; }
+
         const updated = prev.map((o) => o.id === id ? { ...o, x: newX, y: newY } : o);
         return resolveCollisions(updated, id, window.innerWidth, window.innerHeight);
       });
+
+      requestAnimationFrame(animate);
     }
 
-    for (const id of toRemove) {
-      momentumRef.current.delete(id);
-    }
+    requestAnimationFrame(animate);
   }, []);
+
+  // No-op — momentum is now self-animated via releaseObject's RAF loop
+  const applyMomentum = useCallback(() => {}, []);
 
   // Reads from objectsRef so the callback is stable (never needs to be recreated)
   const hitTest = useCallback(
