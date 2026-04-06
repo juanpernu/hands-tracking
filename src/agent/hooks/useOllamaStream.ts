@@ -19,11 +19,22 @@ export interface UseOllamaStreamOptions {
   enabled?: boolean;
 }
 
+export interface OllamaDebugInfo {
+  lastMessage: string | null;
+  lastResponse: string | null;
+  lastLatencyMs: number | null;
+  totalRequests: number;
+  totalSilences: number;
+  totalActions: number;
+  totalErrors: number;
+}
+
 export interface UseOllamaStreamReturn {
   send: (message: string) => void;
   onResponse: React.MutableRefObject<((response: OllamaResponse) => void) | null>;
   isConnected: boolean;
   reconnect: () => void;
+  debugRef: React.MutableRefObject<OllamaDebugInfo>;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +92,16 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
   const backoffRef = useRef(RECONNECT_BASE_MS);
   const mountedRef = useRef(true);
   const sendRef = useRef<(message: string) => void>(() => {});
+  const requestStartRef = useRef(0);
+  const debugRef = useRef<OllamaDebugInfo>({
+    lastMessage: null,
+    lastResponse: null,
+    lastLatencyMs: null,
+    totalRequests: 0,
+    totalSilences: 0,
+    totalActions: 0,
+    totalErrors: 0,
+  });
 
   // --- Health check ---
   const checkHealth = useCallback(async (): Promise<boolean> => {
@@ -140,6 +161,9 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
       }
 
       inflightRef.current = true;
+      requestStartRef.current = performance.now();
+      debugRef.current.lastMessage = message;
+      debugRef.current.totalRequests++;
 
       // Add user message to history
       messagesRef.current.push({ role: 'user', content: message });
@@ -218,6 +242,12 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
 
           // Parse and dispatch
           const parsed = parseResponse(accumulated);
+          const latency = performance.now() - requestStartRef.current;
+          debugRef.current.lastResponse = accumulated.trim();
+          debugRef.current.lastLatencyMs = Math.round(latency);
+          if (parsed.type === 'silence') debugRef.current.totalSilences++;
+          else if (parsed.type === 'action') debugRef.current.totalActions++;
+          else debugRef.current.totalErrors++;
           inflightRef.current = false;
 
           // Send pending message if any
@@ -283,5 +313,5 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
     };
   }, [enabled, checkHealth, scheduleReconnect]);
 
-  return { send, onResponse, isConnected, reconnect };
+  return { send, onResponse, isConnected, reconnect, debugRef };
 }

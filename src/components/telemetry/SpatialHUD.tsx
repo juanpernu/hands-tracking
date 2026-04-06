@@ -1,5 +1,6 @@
 import { memo, useRef, useEffect, useState } from 'react';
 import type { HandSpatialState, SpatialEvent, SpatialEventType } from '../../types/spatial';
+import type { OllamaDebugInfo } from '../../agent/hooks/useAgentBridge';
 
 interface SpatialHUDProps {
   handSpatialRef: React.MutableRefObject<{
@@ -7,6 +8,8 @@ interface SpatialHUDProps {
     right: HandSpatialState | null;
   }>;
   spatialEvents: SpatialEvent[];
+  ollamaConnected?: boolean;
+  ollamaDebugRef?: React.MutableRefObject<OllamaDebugInfo>;
 }
 
 interface SpatialSnapshot {
@@ -127,7 +130,58 @@ function EventFeed({ events }: { events: SpatialEvent[] }) {
   );
 }
 
-export const SpatialHUD = memo(function SpatialHUD({ handSpatialRef, spatialEvents }: SpatialHUDProps) {
+function LLMStatus({ connected, debugRef }: { connected: boolean; debugRef?: React.MutableRefObject<OllamaDebugInfo> }) {
+  const [debug, setDebug] = useState<OllamaDebugInfo | null>(null);
+
+  useEffect(() => {
+    if (!debugRef) return;
+    const id = setInterval(() => {
+      setDebug({ ...debugRef.current });
+    }, 200);
+    return () => clearInterval(id);
+  }, [debugRef]);
+
+  const statusColor = connected ? '#2ECC71' : '#E74C3C';
+  const statusText = connected ? 'CONNECTED' : 'OFFLINE';
+
+  return (
+    <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 5, marginTop: 5 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor, display: 'inline-block', flexShrink: 0 }} />
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.05em', color: statusColor }}>
+          LLM {statusText}
+        </span>
+        {debug?.lastLatencyMs != null && (
+          <span style={{ marginLeft: 'auto', color: '#888', fontSize: 9 }}>
+            {debug.lastLatencyMs}ms
+          </span>
+        )}
+      </div>
+      {debug && (
+        <>
+          <div style={{ display: 'flex', gap: 8, fontSize: 9, color: '#888', marginBottom: 2 }}>
+            <span>req:<span style={{ color: '#ccc' }}>{debug.totalRequests}</span></span>
+            <span>_:<span style={{ color: '#4ECDC4' }}>{debug.totalSilences}</span></span>
+            <span>act:<span style={{ color: '#F39C12' }}>{debug.totalActions}</span></span>
+            <span>err:<span style={{ color: '#E74C3C' }}>{debug.totalErrors}</span></span>
+          </div>
+          {debug.lastMessage && (
+            <div style={{ fontSize: 9, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              → {debug.lastMessage}
+            </div>
+          )}
+          {debug.lastResponse && debug.lastResponse !== '_' && (
+            <div style={{ fontSize: 9, color: '#F39C12', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              ← {debug.lastResponse}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+export const SpatialHUD = memo(function SpatialHUD({ handSpatialRef, spatialEvents, ollamaConnected, ollamaDebugRef }: SpatialHUDProps) {
   const [snapshot, setSnapshot] = useState<SpatialSnapshot>({ left: null, right: null });
 
   useEffect(() => {
@@ -152,6 +206,9 @@ export const SpatialHUD = memo(function SpatialHUD({ handSpatialRef, spatialEven
         <div style={handDividerStyle} />
         <HandSection state={snapshot.left} label="L HAND" labelColor="#FF6B6B" />
       </div>
+
+      {/* LLM status */}
+      <LLMStatus connected={ollamaConnected ?? false} debugRef={ollamaDebugRef} />
 
       {/* Event feed */}
       <div style={feedHeaderStyle}>

@@ -1,9 +1,12 @@
 import { useCallback, useMemo } from 'react';
 import { useOllamaStream } from './useOllamaStream';
+import type { OllamaDebugInfo } from './useOllamaStream';
 import { buildSystemPrompt, formatGestureMessage } from '../ollama-config';
 import type { AgentBridge, InterpretRequest, OllamaResponse } from '../types';
 import type { ActionDefinition, ActionIntent } from '../../plugins/types';
 import type { HandSpatialState } from '../../types/spatial';
+
+export type { OllamaDebugInfo };
 
 export interface AgentBridgeConfig {
   enabled: boolean;
@@ -40,5 +43,10 @@ export function useAgentBridge(config: AgentBridgeConfig): AgentBridge {
 
   const isAvailable = useCallback(() => config.enabled && stream.isConnected, [config.enabled, stream.isConnected]);
 
-  return useMemo(() => ({ interpret, isAvailable }), [interpret, isAvailable]);
+  return useMemo(() => ({
+    interpret,
+    isAvailable,
+    isConnected: stream.isConnected,
+    debugRef: stream.debugRef,
+  }), [interpret, isAvailable, stream.isConnected, stream.debugRef]);
 }

@@ -674,6 +674,8 @@ export default function App() {
             <SpatialHUD
               handSpatialRef={handOverDOM.handSpatialRef}
               spatialEvents={spatialEventLog}
+              ollamaConnected={bridge.isConnected}
+              ollamaDebugRef={bridge.debugRef}
             />
           </DraggablePanel>
         </>
