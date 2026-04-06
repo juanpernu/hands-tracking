@@ -457,7 +457,7 @@ export default function App() {
         timestamp: now,
         gesture: 'tap',
         spatial: tapSelector,
-        tipToPalmDist: tap.tipToPalmDist,
+        fingerDip: tap.fingerDip,
         targetElement: el?.tagName,
       };
       addEntry({

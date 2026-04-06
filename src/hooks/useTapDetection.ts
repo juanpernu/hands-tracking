@@ -1,17 +1,19 @@
 import { useRef, useCallback } from 'react';
 import type { HandData } from '../types';
-import { distance3d } from '../utils/geometry';
 import { TAP } from '../config';
 
 export interface TapEvent {
   handedness: 'Left' | 'Right';
   position: { x: number; y: number; z: number };
   timestamp: number;
-  tipToPalmDist: number;
+  fingerDip: number; // how much the finger dipped (relative Y)
 }
 
+export type TapState = 'idle' | 'tap-down' | 'first-tap' | 'double-tap-down';
+
 export interface TapDebugState {
-  tipToPalmDist: number;
+  fingerExtension: number; // current finger extension (tip Y - MCP Y, normalized)
+  velocity: number;        // rate of change of finger extension
   state: TapState;
 }
 
@@ -20,15 +22,28 @@ export interface UseTapDetectionReturn {
   debugRef: React.MutableRefObject<{ left: TapDebugState | null; right: TapDebugState | null }>;
 }
 
-type TapState = 'idle' | 'tap-down' | 'first-tap' | 'double-tap-down';
-
 interface HandTapState {
   state: TapState;
   firstTapTime: number;
+  prevExtension: number;   // previous frame's finger extension
+  smoothVelocity: number;  // EMA-smoothed velocity
+  baselineExtension: number; // calibrated resting extension
+  calibrationFrames: number;
+  calibrationSum: number;
 }
 
-const PALM_LANDMARK_INDICES = [0, 5, 9, 13, 17] as const;
-
+/**
+ * Tap detection using index finger flexion (landmarks 5→7→8).
+ *
+ * Measures "finger extension" = Y distance from index MCP (5) to index TIP (8).
+ * When the finger flexes (tap), the tip moves toward the MCP → extension decreases.
+ * A tap is a rapid decrease (dip) followed by a return to baseline.
+ *
+ * Uses landmarks:
+ *   5 = INDEX_MCP (knuckle, stable reference)
+ *   7 = INDEX_DIP (tracks flexion)
+ *   8 = INDEX_TIP (most movement during tap)
+ */
 export function useTapDetection(): UseTapDetectionReturn {
   const stateMap = useRef<Map<string, HandTapState>>(new Map());
   const debugRef = useRef<{ left: TapDebugState | null; right: TapDebugState | null }>({ left: null, right: null });
@@ -41,61 +56,89 @@ export function useTapDetection(): UseTapDetectionReturn {
       const key = hand.handedness;
       activeHands.add(key);
 
-      const palmLandmarks = PALM_LANDMARK_INDICES.map((i) => hand.landmarks[i]);
-      const palmCenter = {
-        x: palmLandmarks.reduce((s, l) => s + l.x, 0) / 5,
-        y: palmLandmarks.reduce((s, l) => s + l.y, 0) / 5,
-        z: palmLandmarks.reduce((s, l) => s + l.z, 0) / 5,
-      };
+      const mcp = hand.landmarks[5];  // INDEX_MCP — stable knuckle
+      const dip = hand.landmarks[7];  // INDEX_DIP — mid joint
+      const tip = hand.landmarks[8];  // INDEX_TIP — fingertip
 
-      const indexTip = hand.landmarks[8];
-      const tipToPalmDist = distance3d(indexTip, palmCenter);
+      // Finger extension = how far tip+dip are from MCP in Y axis
+      // Higher Y = further down on screen = finger extended
+      // When finger flexes (tap), tip Y moves UP toward MCP Y → extension decreases
+      const tipExtension = tip.y - mcp.y;
+      const dipExtension = dip.y - mcp.y;
+      const fingerExtension = (tipExtension + dipExtension) / 2;
 
-      // Update debug state
-      const debugKey = key === 'Left' ? 'left' : 'right';
-
-      let handState = stateMap.current.get(key);
-      if (!handState) {
-        handState = { state: 'idle', firstTapTime: 0 };
-        stateMap.current.set(key, handState);
+      let s = stateMap.current.get(key);
+      if (!s) {
+        s = {
+          state: 'idle',
+          firstTapTime: 0,
+          prevExtension: fingerExtension,
+          smoothVelocity: 0,
+          baselineExtension: 0,
+          calibrationFrames: 0,
+          calibrationSum: 0,
+        };
+        stateMap.current.set(key, s);
       }
 
-      switch (handState.state) {
+      // Calibrate baseline extension over first 30 frames
+      if (s.calibrationFrames < 30) {
+        s.calibrationSum += fingerExtension;
+        s.calibrationFrames++;
+        s.baselineExtension = s.calibrationSum / s.calibrationFrames;
+        s.prevExtension = fingerExtension;
+        const debugKey = key === 'Left' ? 'left' : 'right';
+        debugRef.current[debugKey] = { fingerExtension, velocity: 0, state: 'idle' };
+        continue;
+      }
+
+      // Velocity = rate of change (negative = finger flexing/dipping)
+      const rawVelocity = fingerExtension - s.prevExtension;
+      s.smoothVelocity = s.smoothVelocity * 0.5 + rawVelocity * 0.5; // EMA
+      s.prevExtension = fingerExtension;
+
+      // How far the finger has dipped from baseline
+      const dipFromBaseline = s.baselineExtension - fingerExtension;
+
+      const debugKey = key === 'Left' ? 'left' : 'right';
+      debugRef.current[debugKey] = { fingerExtension, velocity: s.smoothVelocity, state: s.state };
+
+      switch (s.state) {
         case 'idle':
-          if (tipToPalmDist < TAP.THRESHOLD) {
-            handState.state = 'tap-down';
+          // Detect downward dip — finger flexing toward palm
+          if (dipFromBaseline > TAP.THRESHOLD && s.smoothVelocity < -TAP.VELOCITY_THRESHOLD) {
+            s.state = 'tap-down';
           }
           break;
 
         case 'tap-down':
-          if (tipToPalmDist > TAP.RELEASE_THRESHOLD) {
-            handState.state = 'first-tap';
-            handState.firstTapTime = timestamp;
+          // Detect return — finger extending back
+          if (dipFromBaseline < TAP.RELEASE_THRESHOLD) {
+            s.state = 'first-tap';
+            s.firstTapTime = timestamp;
           }
           break;
 
         case 'first-tap':
-          if (timestamp - handState.firstTapTime > TAP.DOUBLE_TAP_WINDOW_MS) {
-            handState.state = 'idle';
-          } else if (tipToPalmDist < TAP.THRESHOLD) {
-            handState.state = 'double-tap-down';
+          if (timestamp - s.firstTapTime > TAP.DOUBLE_TAP_WINDOW_MS) {
+            s.state = 'idle';
+          } else if (dipFromBaseline > TAP.THRESHOLD && s.smoothVelocity < -TAP.VELOCITY_THRESHOLD) {
+            s.state = 'double-tap-down';
           }
           break;
 
         case 'double-tap-down':
-          if (tipToPalmDist > TAP.RELEASE_THRESHOLD) {
+          if (dipFromBaseline < TAP.RELEASE_THRESHOLD) {
             events.push({
               handedness: hand.handedness,
-              position: { x: indexTip.x, y: indexTip.y, z: indexTip.z },
+              position: { x: tip.x, y: tip.y, z: tip.z },
               timestamp,
-              tipToPalmDist,
+              fingerDip: dipFromBaseline,
             });
-            handState.state = 'idle';
+            s.state = 'idle';
           }
           break;
       }
-
-      debugRef.current[debugKey] = { tipToPalmDist, state: handState.state };
     }
 
     // Clean up state for hands that disappeared

@@ -238,8 +238,9 @@ export const OLLAMA = {
 
 // --- Tap Gesture ---
 export const TAP = {
-  THRESHOLD: 0.08,
-  RELEASE_THRESHOLD: 0.12,
+  THRESHOLD: 0.02,              // min dip from baseline to detect tap-down (normalized Y)
+  RELEASE_THRESHOLD: 0.01,      // dip must return below this to confirm tap-up
+  VELOCITY_THRESHOLD: 0.003,    // min downward velocity to trigger (prevents slow drift)
   DOUBLE_TAP_WINDOW_MS: 400,
   RIPPLE_DURATION_MS: 300,
   RIPPLE_SIZE: 40,
