@@ -58,6 +58,7 @@ export interface MotionPattern {
   circularDirection?: 1 | -1;
   durationMs: number;
   timestamp: number;
+  gesturePhase: GesturePhase;
 }
 
 // Gesture events (discrete)
