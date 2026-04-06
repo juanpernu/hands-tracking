@@ -452,7 +452,7 @@ export default function App() {
     }
 
     // 6.7 Velocity-based scroll — palm movement directly drives iframe scroll
-    if (navBarRef.current?.hasIframe && physics.length > 0) {
+    if (physics.length > 0) {
       const primaryPhys = physics[0];
       if (primaryPhys) {
         const vy = primaryPhys.palmVelocity.y;
@@ -462,12 +462,15 @@ export default function App() {
 
         // Scroll when palm moves fast enough and no object is grabbed
         if (speed > 0.15 && noObjectGrabbed) {
-          // Map palm velocity directly to scroll pixels
-          // Negative vy = hand moving up = scroll up, positive = scroll down
           const scrollX = Math.round(-vx * currentW * 0.3);
           const scrollY = Math.round(vy * currentH * 0.3);
           if (Math.abs(scrollX) > 2 || Math.abs(scrollY) > 2) {
-            navBarRef.current.scrollBy(scrollX, scrollY);
+            // Try navBar iframe first, fallback to window scroll
+            if (navBarRef.current?.hasIframe) {
+              navBarRef.current.scrollBy(scrollX, scrollY);
+            } else {
+              window.scrollBy(scrollX, scrollY);
+            }
           }
         }
       }
