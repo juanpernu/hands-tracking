@@ -251,3 +251,14 @@ export const NAV_BAR = {
   TRIGGER_ZONE_RIGHT: 0.75,
   HOVER_TRIGGER_MS: 1500,      // hold hand in zone for 1.5s to trigger
 } as const;
+
+// --- Depth Tracking ---
+export const DEPTH = {
+  // Hand size thresholds (distance between wrist and middle finger tip, normalized)
+  // These auto-calibrate after CALIBRATION_FRAMES
+  CALIBRATION_FRAMES: 90,       // ~3 seconds at 30fps
+  OPTIMAL_ZONE_MARGIN: 0.15,    // ±15% of calibrated mean
+  TOO_CLOSE_MULTIPLIER: 1.3,    // 30% larger than mean = too close
+  TOO_FAR_MULTIPLIER: 0.7,      // 30% smaller than mean = too far
+  SMOOTHING_ALPHA: 0.1,         // EMA smoothing for hand size
+} as const;
