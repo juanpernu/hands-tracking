@@ -532,7 +532,7 @@ export default function App() {
       prev.map((e) => (e.id === id ? { ...e, feedback: 'correct' as const } : e))
     );
     const entry = gestureFeedbackLog.find((e) => e.id === id);
-    if (entry && bridge.isConnected) {
+    if (entry) {
       addEntry({
         type: 'gesture-confirm',
         timestamp: performance.now(),
@@ -540,7 +540,7 @@ export default function App() {
         data: { gesture: entry.gesture, spatial: entry.spatial },
       });
     }
-  }, [gestureFeedbackLog, bridge, addEntry]);
+  }, [gestureFeedbackLog, addEntry]);
 
   const handleGestureCorrect = useCallback((id: number, correctGesture: string) => {
     setGestureFeedbackLog((prev) =>
