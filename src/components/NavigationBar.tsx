@@ -85,7 +85,9 @@ const NavigationBar = memo(
       if (!url) return;
       saveRecentUrl(url);
       setRecentUrls(getRecentUrls());
-      setIframeUrl(`/api/proxy?url=${encodeURIComponent(url)}`);
+      // Skip proxy for localhost URLs — load directly in iframe
+      const isLocalhost = /^https?:\/\/localhost(:\d+)?/i.test(url);
+      setIframeUrl(isLocalhost ? url : `/api/proxy?url=${encodeURIComponent(url)}`);
       setIsLoading(true);
       setVisible(false);
       setInputValue('');
