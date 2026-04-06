@@ -79,6 +79,25 @@ export const INTERACTION = {
   SWIPE_DEBOUNCE_MS: 1000,
 } as const;
 
+// --- Hand Features ---
+export const FEATURES = {
+  // Joint constraint limits (radians) — from D-H kinematic model
+  MCP_FLEXION_MIN: 0,
+  MCP_FLEXION_MAX: Math.PI / 2,          // 90°
+  MCP_ABDUCTION_MIN: -Math.PI / 12,      // -15°
+  MCP_ABDUCTION_MAX: Math.PI / 12,       // 15°
+  PIP_FLEXION_MIN: 0,
+  PIP_FLEXION_MAX: (110 / 180) * Math.PI, // 110°
+  DIP_FLEXION_MIN: 0,
+  DIP_FLEXION_MAX: Math.PI / 2,           // 90°
+  // Gesture phase velocity thresholds (normalized units/sec)
+  PHASE_IDLE_THRESHOLD: 0.02,
+  PHASE_PREPARATION_ACCEL_THRESHOLD: 0.1,
+  PHASE_STROKE_DECEL_THRESHOLD: -0.05,
+  PHASE_RETRACTION_SPEED_THRESHOLD: 0.05,
+  PHASE_HYSTERESIS_FRAMES: 3,
+} as const;
+
 // --- Object Management ---
 export const OBJECTS = {
   SIZE: 80,
