@@ -29,7 +29,7 @@ interface HandTapState {
   smoothVelocity: number;  // EMA-smoothed velocity
   baselineExtension: number; // calibrated resting extension
   calibrationFrames: number;
-  calibrationSum: number;
+  calibrationSamples: number[];
 }
 
 /**
@@ -76,16 +76,17 @@ export function useTapDetection(): UseTapDetectionReturn {
           smoothVelocity: 0,
           baselineExtension: 0,
           calibrationFrames: 0,
-          calibrationSum: 0,
+          calibrationSamples: [],
         };
         stateMap.current.set(key, s);
       }
 
-      // Calibrate baseline over first 30 frames
+      // Calibrate baseline over first 30 frames (median resists outliers from flexed starts)
       if (s.calibrationFrames < 30) {
-        s.calibrationSum += fingerExtension;
+        s.calibrationSamples.push(fingerExtension);
         s.calibrationFrames++;
-        s.baselineExtension = s.calibrationSum / s.calibrationFrames;
+        const sorted = [...s.calibrationSamples].sort((a, b) => a - b);
+        s.baselineExtension = sorted[Math.floor(sorted.length / 2)];
         s.prevExtension = fingerExtension;
         const dk = key === 'Left' ? 'left' : 'right';
         debugRef.current[dk] = { fingerExtension, velocity: 0, state: 'idle' };

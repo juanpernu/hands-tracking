@@ -47,10 +47,9 @@ function getDisplayProps(snapshot: DepthSnapshot | null): {
 export const DepthIndicator = memo(function DepthIndicator({ depthRef, visible }: DepthIndicatorProps) {
   const [snapshot, setSnapshot] = useState<DepthSnapshot | null>(null);
   const [hidden, setHidden] = useState(false);
+  const hiddenRef = useRef(false);
   const optimalSinceRef = useRef<number | null>(null);
   const hiddenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [pulseOpacity, setPulseOpacity] = useState(1);
-  const pulseDirectionRef = useRef<1 | -1>(1);
 
   // Poll depthRef every 200ms
   useEffect(() => {
@@ -61,6 +60,7 @@ export const DepthIndicator = memo(function DepthIndicator({ depthRef, visible }
       if (hand === null) {
         setSnapshot(null);
         optimalSinceRef.current = null;
+        hiddenRef.current = false;
         setHidden(false);
         if (hiddenTimerRef.current !== null) {
           clearTimeout(hiddenTimerRef.current);
@@ -74,12 +74,15 @@ export const DepthIndicator = memo(function DepthIndicator({ depthRef, visible }
       if (hand.zone === 'optimal') {
         if (optimalSinceRef.current === null) {
           optimalSinceRef.current = Date.now();
+          hiddenRef.current = false;
           setHidden(false);
-        } else if (Date.now() - optimalSinceRef.current >= 2000 && !hidden) {
+        } else if (Date.now() - optimalSinceRef.current >= 2000 && !hiddenRef.current) {
+          hiddenRef.current = true;
           setHidden(true);
         }
       } else {
         optimalSinceRef.current = null;
+        hiddenRef.current = false;
         setHidden(false);
         if (hiddenTimerRef.current !== null) {
           clearTimeout(hiddenTimerRef.current);
@@ -94,32 +97,7 @@ export const DepthIndicator = memo(function DepthIndicator({ depthRef, visible }
         clearTimeout(hiddenTimerRef.current);
       }
     };
-  }, [depthRef, hidden]);
-
-  // Pulse animation for calibrating state
-  useEffect(() => {
-    if (snapshot?.zone !== 'calibrating') {
-      setPulseOpacity(1);
-      return;
-    }
-
-    const id = setInterval(() => {
-      setPulseOpacity(prev => {
-        const next = prev + pulseDirectionRef.current * 0.08;
-        if (next >= 1) {
-          pulseDirectionRef.current = -1;
-          return 1;
-        }
-        if (next <= 0.3) {
-          pulseDirectionRef.current = 1;
-          return 0.3;
-        }
-        return next;
-      });
-    }, 50);
-
-    return () => clearInterval(id);
-  }, [snapshot?.zone]);
+  }, [depthRef]);
 
   if (!visible || hidden) {
     return null;
@@ -132,7 +110,7 @@ export const DepthIndicator = memo(function DepthIndicator({ depthRef, visible }
       <span
         style={{
           color,
-          opacity: pulsing ? pulseOpacity : 1,
+          animation: pulsing ? 'depth-pulse 1s ease-in-out infinite' : 'none',
           transition: pulsing ? undefined : 'color 0.2s ease',
         }}
       >

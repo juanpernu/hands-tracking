@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useOllamaStream } from './useOllamaStream';
 import type { OllamaDebugInfo } from './useOllamaStream';
 import { buildSystemPrompt, formatGestureMessage } from '../ollama-config';
@@ -27,11 +27,13 @@ export function useAgentBridge(config: AgentBridgeConfig): AgentBridge {
   });
 
   // Wire LLM responses to action callback
-  stream.onResponse.current = useCallback((response: OllamaResponse) => {
-    if (response.type === 'action') {
-      config.onAction?.current?.(response.intent);
-    }
-  }, [config.onAction]);
+  useEffect(() => {
+    stream.onResponse.current = (response: OllamaResponse) => {
+      if (response.type === 'action') {
+        config.onAction?.current?.(response.intent);
+      }
+    };
+  }, [stream, config.onAction]);
 
   const interpret = useCallback(async (request: InterpretRequest): Promise<ActionIntent | null> => {
     if (!config.enabled || !stream.isConnected) return null;

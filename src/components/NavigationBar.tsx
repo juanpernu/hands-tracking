@@ -54,19 +54,23 @@ const NavigationBar = memo(
 
     const inputRef = useRef<HTMLInputElement>(null);
     const iframeRef = useRef<HTMLIFrameElement>(null);
+    const visibleRef = useRef(false);
+    const iframeUrlRef = useRef<string | null>(null);
 
     // Expose handle to parent
     useImperativeHandle(
       ref,
       () => ({
         show() {
+          visibleRef.current = true;
           setVisible(true);
         },
         hide() {
+          visibleRef.current = false;
           setVisible(false);
         },
         get isVisible() {
-          return visible;
+          return visibleRef.current;
         },
         scrollBy(deltaX: number, deltaY: number) {
           iframeRef.current?.contentWindow?.postMessage(
@@ -75,21 +79,18 @@ const NavigationBar = memo(
           );
         },
         get hasIframe() {
-          return iframeUrl !== null;
+          return iframeUrlRef.current !== null;
         },
       }),
-      [visible, iframeUrl],
+      [],
     );
 
-    // Reload recents when bar opens
+    // Reload recents when bar opens + auto-focus
     useEffect(() => {
-      if (visible) {
-        setRecentUrls(getRecentUrls());
-        // Auto-focus input on next tick so the element is mounted
-        setTimeout(() => {
-          inputRef.current?.focus();
-        }, 0);
-      }
+      if (!visible) return;
+      setRecentUrls(getRecentUrls());
+      const id = setTimeout(() => inputRef.current?.focus(), 0);
+      return () => clearTimeout(id);
     }, [visible]);
 
     const navigate = useCallback((rawUrl: string) => {
@@ -98,8 +99,11 @@ const NavigationBar = memo(
       saveRecentUrl(url);
       setRecentUrls(getRecentUrls());
       // All URLs go through proxy to strip iframe-blocking headers
-      setIframeUrl(`/api/proxy?url=${encodeURIComponent(url)}`);
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+      iframeUrlRef.current = proxyUrl;
+      setIframeUrl(proxyUrl);
       setIsLoading(true);
+      visibleRef.current = false;
       setVisible(false);
       setInputValue('');
     }, []);
@@ -117,6 +121,7 @@ const NavigationBar = memo(
     );
 
     const handleCloseIframe = useCallback(() => {
+      iframeUrlRef.current = null;
       setIframeUrl(null);
       setIsLoading(false);
     }, []);
@@ -297,22 +302,6 @@ const loadingFillStyle: React.CSSProperties = {
   background: 'rgba(78,205,196,0.8)',
   animation: 'navbarLoadingSlide 1.2s ease-in-out infinite',
 };
-
-// Inject keyframes once
-if (typeof document !== 'undefined') {
-  const styleId = 'navbar-loading-keyframes';
-  if (!document.getElementById(styleId)) {
-    const style = document.createElement('style');
-    style.id = styleId;
-    style.textContent = `
-      @keyframes navbarLoadingSlide {
-        0%   { margin-left: -40%; }
-        100% { margin-left: 100%; }
-      }
-    `;
-    document.head.appendChild(style);
-  }
-}
 
 const closeButtonStyle: React.CSSProperties = {
   position: 'fixed',

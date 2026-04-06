@@ -5,7 +5,6 @@ import type {
   GripState,
   MotionPattern,
   HandTelemetry,
-  GestureEvent,
 } from '../types/telemetry';
 import type { SpatialTelemetryData } from '../types/spatial';
 
@@ -47,7 +46,7 @@ interface BatchTelemetryResult {
 
 interface PendingBatch {
   frames: HandTelemetry[];
-  events: GestureEvent[];
+  events: Record<string, unknown>[];
   startTime: number;
   endTime: number;
 }
@@ -291,7 +290,7 @@ export function useBatchTelemetry(config: BatchConfig = {}): BatchTelemetryResul
   // Record a gesture/feedback event into the current batch
   const recordEvent = useCallback((event: Record<string, unknown>) => {
     if (!enabled) return;
-    bufferRef.current.events.push(event as unknown as GestureEvent);
+    bufferRef.current.events.push(event);
     statsRef.current.totalEvents++;
     const eventType = String(event.type ?? 'unknown');
     statsRef.current.eventBreakdown[eventType] = (statsRef.current.eventBreakdown[eventType] ?? 0) + 1;

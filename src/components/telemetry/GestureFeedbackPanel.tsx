@@ -50,8 +50,8 @@ const CORRECTION_OPTIONS = [
 
 // --- Helpers ---
 
-function formatRelativeTime(timestamp: number): string {
-  const deltaMs = performance.now() - timestamp;
+function formatRelativeTime(timestamp: number, now: number): string {
+  const deltaMs = now - timestamp;
   const seconds = Math.floor(deltaMs / 1000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -83,9 +83,7 @@ function GestureRow({ entry, expandedId, onConfirm, onCorrect, onToggleExpand, n
     ? '#E74C3C'
     : getGestureColor(entry.gesture);
 
-  const relativeTime = formatRelativeTime(entry.timestamp);
-  // re-compute relative time on each render driven by parent's `now` ticker
-  void now;
+  const relativeTime = formatRelativeTime(entry.timestamp, now);
 
   let leftBorderColor = 'transparent';
   if (entry.feedback === 'correct') leftBorderColor = '#2ECC71';

@@ -74,7 +74,6 @@ export interface ObjectManagementResult {
   moveObject: (id: string, position: Position) => void;
   releaseObject: (id: string) => void;
   toggleSize: (id: string) => void;
-  applyMomentum: () => void;
   hitTest: (cursor: Position) => string | null;
   clearAll: () => void;
 }
@@ -91,6 +90,7 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
 
   const lastAddTimeRef = useRef<number>(0);
   const momentumRef = useRef<Map<string, ObjectMomentum>>(new Map());
+  const momentumRafRef = useRef<Map<string, number>>(new Map());
 
   const addObject = useCallback((position: Position) => {
     const now = Date.now();
@@ -105,6 +105,9 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
   }, []);
 
   const removeObject = useCallback((id: string) => {
+    // Cancel any in-flight momentum RAF loop
+    const rafId = momentumRafRef.current.get(id);
+    if (rafId) { cancelAnimationFrame(rafId); momentumRafRef.current.delete(id); }
     setObjects((prev) => prev.filter((obj) => obj.id !== id));
   }, []);
 
@@ -226,36 +229,34 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     // Self-contained RAF animation loop
     function animate() {
       const speed = Math.sqrt(vx * vx + vy * vy);
-      if (speed < MIN_VELOCITY) return; // stop animation
+      if (speed < MIN_VELOCITY) { momentumRafRef.current.delete(id); return; }
 
+      // Apply friction outside setObjects
       vx *= FRICTION;
       vy *= FRICTION;
 
+      const obj = objectsRef.current.find(o => o.id === id);
+      if (!obj) { momentumRafRef.current.delete(id); return; } // object removed
+
+      let newX = obj.x + vx;
+      let newY = obj.y + vy;
+
+      // Bounce off edges (outside setObjects so mutations are idempotent)
+      if (newX <= 0) { newX = 0; vx *= -0.5; }
+      if (newX >= window.innerWidth - obj.width) { newX = window.innerWidth - obj.width; vx *= -0.5; }
+      if (newY <= 0) { newY = 0; vy *= -0.5; }
+      if (newY >= window.innerHeight - obj.height) { newY = window.innerHeight - obj.height; vy *= -0.5; }
+
       setObjects((prev) => {
-        const obj = prev.find((o) => o.id === id);
-        if (!obj) return prev;
-
-        let newX = obj.x + vx;
-        let newY = obj.y + vy;
-
-        // Bounce off edges
-        if (newX <= 0) { newX = 0; vx *= -0.5; }
-        if (newX >= window.innerWidth - obj.width) { newX = window.innerWidth - obj.width; vx *= -0.5; }
-        if (newY <= 0) { newY = 0; vy *= -0.5; }
-        if (newY >= window.innerHeight - obj.height) { newY = window.innerHeight - obj.height; vy *= -0.5; }
-
         const updated = prev.map((o) => o.id === id ? { ...o, x: newX, y: newY } : o);
         return resolveCollisions(updated, id, window.innerWidth, window.innerHeight);
       });
 
-      requestAnimationFrame(animate);
+      momentumRafRef.current.set(id, requestAnimationFrame(animate));
     }
 
-    requestAnimationFrame(animate);
+    momentumRafRef.current.set(id, requestAnimationFrame(animate));
   }, []);
-
-  // No-op — momentum is now self-animated via releaseObject's RAF loop
-  const applyMomentum = useCallback(() => {}, []);
 
   // Reads from objectsRef so the callback is stable (never needs to be recreated)
   const hitTest = useCallback(
@@ -277,5 +278,5 @@ export function useObjectManagement(initialCount = 4): ObjectManagementResult {
     setObjects([]);
   }, []);
 
-  return { objects, addObject, removeObject, moveObject, releaseObject, toggleSize, applyMomentum, hitTest, clearAll };
+  return { objects, addObject, removeObject, moveObject, releaseObject, toggleSize, hitTest, clearAll };
 }

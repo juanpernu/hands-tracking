@@ -38,7 +38,8 @@ export interface UseHandAnalysisReturn {
 export function useHandAnalysis(): UseHandAnalysisReturn {
   const computePhysics = useHandPhysics();
   const detectGrip = useGripDetection();
-  const classifyMotion = useMotionRecognition();
+  const classifyMotionLeft = useMotionRecognition();
+  const classifyMotionRight = useMotionRecognition();
 
   // Refs hold the latest raw data — updated every frame, never cause re-renders
   const physicsRef = useRef<HandPhysics[]>([]);
@@ -57,7 +58,9 @@ export function useHandAnalysis(): UseHandAnalysisReturn {
     (hands: HandData[], timestamp: number): HandAnalysisData => {
       const physics = computePhysics(hands, timestamp);
       const grips = detectGrip(hands, timestamp);
-      const motions = physics.map((p) => classifyMotion(p, timestamp));
+      const motions = physics.map((p) =>
+        p.handedness === 'Left' ? classifyMotionLeft(p, timestamp) : classifyMotionRight(p, timestamp),
+      );
 
       // Always write to refs (every frame, no re-render)
       physicsRef.current = physics;
@@ -74,7 +77,7 @@ export function useHandAnalysis(): UseHandAnalysisReturn {
 
       return { physicsData: physics, gripData: grips, motionData: motions };
     },
-    [computePhysics, detectGrip, classifyMotion],
+    [computePhysics, detectGrip, classifyMotionLeft, classifyMotionRight],
   );
 
   return {

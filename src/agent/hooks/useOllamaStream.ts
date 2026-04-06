@@ -81,6 +81,12 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
 
   // --- State (only isConnected triggers re-renders) ---
   const [isConnected, setIsConnected] = useState(false);
+  const isConnectedRef = useRef(false);
+
+  const updateConnected = useCallback((value: boolean) => {
+    isConnectedRef.current = value;
+    updateConnected(value);
+  }, []);
 
   // --- Refs ---
   const messagesRef = useRef<ChatMessage[]>([]);
@@ -115,7 +121,7 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
 
   // --- Reconnect with exponential backoff ---
   const scheduleReconnect = useCallback(() => {
-    if (reconnectTimerRef.current) return; // already scheduled
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
 
     reconnectTimerRef.current = setTimeout(async () => {
       reconnectTimerRef.current = null;
@@ -123,7 +129,7 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
 
       const healthy = await checkHealth();
       if (healthy) {
-        setIsConnected(true);
+        updateConnected(true);
         backoffRef.current = RECONNECT_BASE_MS;
       } else {
         backoffRef.current = Math.min(backoffRef.current * 2, RECONNECT_MAX_MS);
@@ -139,12 +145,12 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
       reconnectTimerRef.current = null;
     }
     backoffRef.current = RECONNECT_BASE_MS;
-    setIsConnected(false);
+    updateConnected(false);
 
     void checkHealth().then((healthy) => {
       if (!mountedRef.current) return;
       if (healthy) {
-        setIsConnected(true);
+        updateConnected(true);
       } else {
         scheduleReconnect();
       }
@@ -192,15 +198,15 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
 
           if (!res.ok || !res.body) {
             inflightRef.current = false;
-            if (!isConnected) return;
-            setIsConnected(false);
+            if (!isConnectedRef.current) return;
+            updateConnected(false);
             scheduleReconnect();
             return;
           }
 
           // Mark connected on successful response
-          if (!isConnected) {
-            setIsConnected(true);
+          if (!isConnectedRef.current) {
+            updateConnected(true);
             backoffRef.current = RECONNECT_BASE_MS;
           }
 
@@ -265,13 +271,13 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
           }
           inflightRef.current = false;
           if (mountedRef.current) {
-            setIsConnected(false);
+            updateConnected(false);
             scheduleReconnect();
           }
         }
       })();
     },
-    [baseUrl, model, systemPrompt, keepAliveMs, isConnected, scheduleReconnect],
+    [baseUrl, model, systemPrompt, keepAliveMs, scheduleReconnect],
   );
 
   // Keep sendRef in sync
@@ -285,9 +291,9 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
       void checkHealth().then((healthy) => {
         if (!mountedRef.current) return;
         if (healthy) {
-          setIsConnected(true);
+          updateConnected(true);
         } else {
-          setIsConnected(false);
+          updateConnected(false);
           scheduleReconnect();
         }
       });

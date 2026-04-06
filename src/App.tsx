@@ -116,7 +116,7 @@ export default function App() {
   const { hands, isReady, error, videoRef } = useHandTracking();
   const detectGesture = useGestureDetection();
   const { positionRef: mousePosRef, isGrabbing: mouseGrabbing, containerRef } = useMouseFallback();
-  const { objects, addObject, removeObject, moveObject, releaseObject, toggleSize, applyMomentum, hitTest } = useObjectManagement(0);
+  const { objects, addObject, removeObject, moveObject, releaseObject, toggleSize, hitTest } = useObjectManagement(0);
 
   // --- Analysis hooks ---
   const { physicsData, gripData, motionData, gripRef, computeFrame } = useHandAnalysis();
@@ -175,7 +175,9 @@ export default function App() {
   }, [dispatcher, addToast]);
 
   // Wire LLM async responses to the same action handler
-  onLLMActionRef.current = handleAction;
+  useEffect(() => {
+    onLLMActionRef.current = handleAction;
+  }, [handleAction]);
 
   const interpreter = useGestureInterpreter({
     mappings: defaultMappings,
@@ -367,9 +369,6 @@ export default function App() {
       },
     );
 
-    // Apply momentum to released objects (runs every frame for smooth physics)
-    applyMomentum();
-
     // 5.4 Depth tracking
     updateDepth(currentHands);
 
@@ -492,13 +491,12 @@ export default function App() {
         return next.length > 15 ? next.slice(-15) : next;
       });
 
-      // Check if tap hit a draggable object → toggle size
+      // Check if tap hit a draggable object → toggle size, otherwise click element
       const tappedObjectId = hitTest({ x: px, y: py });
       if (tappedObjectId) {
         toggleSize(tappedObjectId);
-      }
-
-      if (el && el instanceof HTMLElement) {
+        tapRippleRef.current?.trigger(px, py);
+      } else if (el && el instanceof HTMLElement) {
         el.click();
         tapRippleRef.current?.trigger(px, py);
       }
@@ -506,32 +504,29 @@ export default function App() {
 
     // 6.6 Navigation bar trigger — hand hovering in top-center zone for 1.5s
     const navState = navZoneRef.current;
-    for (const hand of currentHands) {
+    const anyHandInZone = currentHands.some((hand) => {
       const lm8 = hand.landmarks[8];
-      if (lm8) {
-        const nx = 1 - lm8.x; // mirrored
-        const ny = lm8.y;
-        const inZone = ny < NAV_BAR.TRIGGER_ZONE_TOP
-          && nx > NAV_BAR.TRIGGER_ZONE_LEFT
-          && nx < NAV_BAR.TRIGGER_ZONE_RIGHT;
+      if (!lm8) return false;
+      const nx = 1 - lm8.x;
+      const ny = lm8.y;
+      return ny < NAV_BAR.TRIGGER_ZONE_TOP && nx > NAV_BAR.TRIGGER_ZONE_LEFT && nx < NAV_BAR.TRIGGER_ZONE_RIGHT;
+    });
 
-        if (inZone) {
-          if (navState.enterTime === 0) navState.enterTime = now;
-          if (now - navState.enterTime >= NAV_BAR.HOVER_TRIGGER_MS && !navState.triggered) {
-            navState.triggered = true;
-            navBarRef.current?.show();
-          }
-        } else {
-          navState.enterTime = 0;
-          navState.triggered = false;
-        }
+    if (anyHandInZone) {
+      if (navState.enterTime === 0) navState.enterTime = now;
+      if (now - navState.enterTime >= NAV_BAR.HOVER_TRIGGER_MS && !navState.triggered) {
+        navState.triggered = true;
+        navBarRef.current?.show();
       }
+    } else {
+      navState.enterTime = 0;
+      navState.triggered = false;
     }
 
     // 6.7 Velocity-based scroll — palm movement directly drives iframe scroll
     // Only active when hand is in optimal depth zone (calibrated)
     const depthState = depthRef.current.right ?? depthRef.current.left;
-    const inOptimalZone = depthState?.zone === 'optimal' || depthState?.zone === 'calibrating';
+    const inOptimalZone = depthState?.zone === 'optimal';
 
     if (physics.length > 0 && inOptimalZone) {
       const primaryPhys = physics[0];
@@ -587,7 +582,6 @@ export default function App() {
     removeObject,
     moveObject,
     releaseObject,
-    applyMomentum,
     mousePosRef,
     spatialIndex,
     handOverDOM,
@@ -666,38 +660,36 @@ export default function App() {
   }, [edgeWarning]);
 
   const handleGestureConfirm = useCallback((id: number) => {
-    setGestureFeedbackLog((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, feedback: 'correct' as const } : e))
-    );
-    const entry = gestureFeedbackLog.find((e) => e.id === id);
-    if (entry) {
-      const eventData = { type: 'gesture-confirm', timestamp: performance.now(), gesture: entry.gesture, spatial: entry.spatial };
-      addEntry({
-        type: 'gesture-confirm',
-        timestamp: eventData.timestamp,
-        description: `Confirmed: ${entry.gesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
-        data: eventData,
-      });
-      recordBatchEvent(eventData);
-    }
-  }, [gestureFeedbackLog, addEntry, recordBatchEvent]);
+    setGestureFeedbackLog((prev) => {
+      const entry = prev.find((e) => e.id === id);
+      if (entry) {
+        addEntry({
+          type: 'gesture-confirm',
+          timestamp: performance.now(),
+          description: `Confirmed: ${entry.gesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
+          data: { type: 'gesture-confirm', gesture: entry.gesture, spatial: entry.spatial },
+        });
+        recordBatchEvent({ type: 'gesture-confirm', timestamp: performance.now(), gesture: entry.gesture, spatial: entry.spatial });
+      }
+      return prev.map((e) => (e.id === id ? { ...e, feedback: 'correct' as const } : e));
+    });
+  }, [addEntry, recordBatchEvent]);
 
   const handleGestureCorrect = useCallback((id: number, correctGesture: string) => {
-    setGestureFeedbackLog((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, feedback: 'incorrect' as const, correction: correctGesture } : e))
-    );
-    const entry = gestureFeedbackLog.find((e) => e.id === id);
-    if (entry) {
-      const eventData = { type: 'gesture-correction', timestamp: performance.now(), detected: entry.gesture, correct: correctGesture, spatial: entry.spatial };
-      addEntry({
-        type: 'gesture-correction',
-        timestamp: eventData.timestamp,
-        description: `Correction: ${entry.gesture} → ${correctGesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
-        data: eventData,
-      });
-      recordBatchEvent(eventData);
-    }
-  }, [gestureFeedbackLog, addEntry, recordBatchEvent]);
+    setGestureFeedbackLog((prev) => {
+      const entry = prev.find((e) => e.id === id);
+      if (entry) {
+        addEntry({
+          type: 'gesture-correction',
+          timestamp: performance.now(),
+          description: `Correction: ${entry.gesture} → ${correctGesture}${entry.spatial ? ` on ${entry.spatial}` : ''}`,
+          data: { type: 'gesture-correction', detected: entry.gesture, correct: correctGesture, spatial: entry.spatial },
+        });
+        recordBatchEvent({ type: 'gesture-correction', timestamp: performance.now(), detected: entry.gesture, correct: correctGesture, spatial: entry.spatial });
+      }
+      return prev.map((e) => (e.id === id ? { ...e, feedback: 'incorrect' as const, correction: correctGesture } : e));
+    });
+  }, [addEntry, recordBatchEvent]);
 
   // Clap → send to gesture interpreter only (no screenshot)
   useEffect(() => {

@@ -37,7 +37,6 @@ export const GRIP = {
   FIST_THRESHOLD: 0.7,
   OPEN_THRESHOLD: 0.3,
   PINCH_OPEN_THRESHOLD: 0.3,
-  PINCH_CURL_THRESHOLD: 0.15,
   PINCH_TIP_DISTANCE: 0.04,
   PINCH_SUSTAIN_FRAMES: 2,   // must hold proximity for N frames to confirm pinch
   POINT_OPEN_THRESHOLD: 0.3,
