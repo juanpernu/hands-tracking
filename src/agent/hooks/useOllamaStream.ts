@@ -80,6 +80,7 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backoffRef = useRef(RECONNECT_BASE_MS);
   const mountedRef = useRef(true);
+  const sendRef = useRef<(message: string) => void>(() => {});
 
   // --- Health check ---
   const checkHealth = useCallback(async (): Promise<boolean> => {
@@ -223,7 +224,7 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
           if (pendingRef.current) {
             const pending = pendingRef.current;
             pendingRef.current = null;
-            send(pending);
+            sendRef.current(pending);
           }
 
           onResponse.current?.(parsed);
@@ -240,8 +241,11 @@ export function useOllamaStream(options: UseOllamaStreamOptions): UseOllamaStrea
         }
       })();
     },
-    [baseUrl, model, systemPrompt, keepAliveMs, isConnected, scheduleReconnect, send],
+    [baseUrl, model, systemPrompt, keepAliveMs, isConnected, scheduleReconnect],
   );
+
+  // Keep sendRef in sync
+  sendRef.current = send;
 
   // --- Mount / unmount ---
   useEffect(() => {
