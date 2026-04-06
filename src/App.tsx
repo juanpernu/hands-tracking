@@ -244,7 +244,7 @@ export default function App() {
   const fpsRef = useRef({ count: 0, lastTime: performance.now() });
 
   // --- Tap detection ---
-  const { detect: detectTap } = useTapDetection();
+  const { detect: detectTap, debugRef: tapDebugRef } = useTapDetection();
 
   // --- Depth tracking ---
   const { update: updateDepth, stateRef: depthRef } = useDepthTracking();
@@ -329,8 +329,21 @@ export default function App() {
     updateShake(currentHands, physics, currentObjects, removeObject, now);
     updateMotion(motions, currentHands);
 
-    // 4. Detect gesture
+    // 3.5 Detect taps early (before gesture detection, to suppress pinch during tap)
+    const taps = detectTap(currentHands, now);
+
+    // 4. Detect gesture (pinch suppressed if tap is in active state)
     const gesture = detectGesture(currentHands);
+
+    // Suppress pinch if tap detector is in an active state (tap-down, first-tap, double-tap-down)
+    const tapState = tapDebugRef.current;
+    const tapActive = (tapState.right?.state && tapState.right.state !== 'idle')
+      || (tapState.left?.state && tapState.left.state !== 'idle');
+    if (tapActive && gesture) {
+      gesture.isPinching = false;
+      gesture.isLeftPinching = false;
+      gesture.isBothPinching = false;
+    }
 
     // 5. Run interaction controller — returns cursor pixel + resolved gesture or null
     const result = update(
@@ -441,8 +454,7 @@ export default function App() {
       }
     }
 
-    // 6.5 Tap detection — double-tap dispatches native click + ripple
-    const taps = detectTap(currentHands, now);
+    // 6.5 Tap action — events collected at step 3.5
     for (const tap of taps) {
       const px = (1 - tap.position.x) * currentW;
       const py = tap.position.y * currentH;

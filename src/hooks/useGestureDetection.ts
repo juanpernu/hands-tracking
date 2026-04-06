@@ -67,17 +67,15 @@ export function useGestureDetection() {
     }
 
     // --- Per-hand pinch / spread detection ---
-    // Detects two-finger (thumb+index) or three-finger (thumb+index+middle) pinch.
-    // Requires sustained proximity for PINCH_SUSTAIN_FRAMES to prevent false positives
-    // from transient finger proximity during normal hand movement.
+    // Uses thumb-index distance ONLY. Thumb-middle was removed because
+    // during tap gestures, thumb and middle naturally drift close together,
+    // causing false pinch detections that block tap recognition.
     const pinchResults = hands.map((hand) => {
       const thumb = hand.landmarks[LANDMARK.THUMB_TIP];
       const index = hand.landmarks[LANDMARK.INDEX_TIP];
-      const middle = hand.landmarks[LANDMARK.MIDDLE_TIP];
 
       const thumbIndexDist = distance(thumb, index);
-      const thumbMiddleDist = middle ? distance(thumb, middle) : Infinity;
-      const minDist = Math.min(thumbIndexDist, thumbMiddleDist);
+      const minDist = thumbIndexDist;
       const key = hand.handedness;
 
       const wasPinching = pinchStateRef.current[key] ?? false;
