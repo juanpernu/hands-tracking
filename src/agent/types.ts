@@ -45,3 +45,17 @@ export interface AgentBridge {
   interpret(request: InterpretRequest): Promise<ActionIntent | null>;
   isAvailable(): boolean;
 }
+
+// --- Ollama Integration ---
+
+export type OllamaResponse =
+  | { type: 'silence' }
+  | { type: 'action'; intent: ActionIntent }
+  | { type: 'error'; message: string };
+
+export interface OllamaStreamConfig {
+  model: string;
+  baseUrl: string;
+  systemPrompt: string;
+  keepAliveMs: number;
+}

@@ -223,3 +223,14 @@ export const SPATIAL = {
   HUD_EVENT_FEED_MAX: 20,
   HUD_THROTTLE_MS: 100,
 } as const;
+
+// --- Ollama LLM ---
+export const OLLAMA = {
+  MODEL: 'gemma4:e2b',
+  BASE_URL: 'http://localhost:11434',
+  KEEP_ALIVE_MS: 300_000,
+  RECONNECT_BASE_MS: 1000,
+  RECONNECT_MAX_MS: 30_000,
+  MAX_CONTEXT_MESSAGES: 100,
+  DEBOUNCE_MS: 100,
+} as const;
