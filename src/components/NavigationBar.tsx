@@ -162,6 +162,8 @@ const NavigationBar = memo(
             style={iframeStyle}
             title="NavigationBar iframe"
             referrerPolicy="no-referrer"
+            // @ts-expect-error -- credentialless is a valid iframe attribute but not yet in React types
+            credentialless="true"
             onLoad={() => setIsLoading(false)}
           />
         )}
